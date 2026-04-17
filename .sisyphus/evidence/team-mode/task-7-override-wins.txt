@@ -1,0 +1,2 @@
+bun test src/features/builtin-skills/skills.test.ts src/features/builtin-skills/skills/team-mode.test.ts
+PASS: disabled_skills override wins
