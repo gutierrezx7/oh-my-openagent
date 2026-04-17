@@ -1,3 +1,5 @@
+import { log } from "../../shared/logger"
+
 export type PendingRetryScheduler = {
   schedule: () => void
   stop: () => void
@@ -14,11 +16,22 @@ export function createPendingRetryScheduler(options: PendingRetrySchedulerOption
 
   async function run(): Promise<void> {
     timer = undefined
-    const sessions = options.getPendingSessions()
-    for (const sessionID of sessions) {
-      await options.drainSession(sessionID)
+    try {
+      const sessions = options.getPendingSessions()
+      for (const sessionID of sessions) {
+        try {
+          await options.drainSession(sessionID)
+        } catch (error) {
+          log("team session streamer drain session failed", {
+            event: "team-mode-session-streamer-drain-error",
+            sessionID,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
+    } finally {
+      if (options.getPendingSessions().length > 0) schedule()
     }
-    if (options.getPendingSessions().length > 0) schedule()
   }
 
   function schedule(): void {
