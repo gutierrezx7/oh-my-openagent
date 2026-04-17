@@ -387,8 +387,6 @@ export function createEventHandler(args: {
     const { event } = input;
     const props = event.properties as Record<string, unknown> | undefined;
 
-    await runEventHookSafely("teamSessionStreamer", teamSessionStreamer?.event, input);
-
     if (tmuxIntegrationEnabled && TMUX_ACTIVITY_EVENT_TYPES.has(event.type)) {
       managers.tmuxSessionManager.onEvent?.(event as { type: string; properties?: Record<string, unknown> });
     }
