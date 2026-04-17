@@ -182,7 +182,27 @@ export const AGENT_ELIGIBILITY_REGISTRY: Readonly<Record<string, {
   "sisyphus-junior": { verdict: "eligible" },
 } as const
 
-export const parseMember = createParseMember(MemberSchema, AGENT_ELIGIBILITY_REGISTRY)
+const parseMemberBase = createParseMember(MemberSchema, AGENT_ELIGIBILITY_REGISTRY)
+
+export function parseMember(input: unknown): Member {
+  if (input == null || typeof input !== "object") {
+    return parseMemberBase(input)
+  }
+
+  const raw = input as Record<string, unknown>
+  if (raw.subagent_type !== undefined) {
+    if (typeof raw.subagent_type !== "string" || !(raw.subagent_type in AGENT_ELIGIBILITY_REGISTRY)) {
+      return parseMemberBase(input)
+    }
+
+    const entry = AGENT_ELIGIBILITY_REGISTRY[raw.subagent_type]
+    if (entry.verdict === "hard-reject") {
+      throw new Error(entry.rejectionMessage)
+    }
+  }
+
+  return parseMemberBase(input)
+}
 
 export type TeamSpec = z.infer<typeof TeamSpecSchema>
 export type Member = z.infer<typeof MemberSchema>

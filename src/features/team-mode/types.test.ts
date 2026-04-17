@@ -106,6 +106,48 @@ describe("team-mode types", () => {
     }
   })
 
+  test("parseMember rejects hard-reject subagent types with exact messages", () => {
+    // given
+    const cases = [
+      [
+        "oracle",
+        "Agent 'oracle' is read-only (cannot write files). Team members must write to mailbox inbox files. Use delegate-task with subagent_type: 'oracle' for read-only analysis instead.",
+      ],
+      [
+        "librarian",
+        "Agent 'librarian' is read-only (write/edit denied). Cannot write to mailbox as team member. Use delegate-task for research queries instead.",
+      ],
+      [
+        "explore",
+        "Agent 'explore' is read-only (write/edit denied). Cannot write to mailbox as team member. Use delegate-task for codebase exploration instead.",
+      ],
+      [
+        "multimodal-looker",
+        "Agent 'multimodal-looker' has read-only tool access (only 'read' allowed). Cannot write to mailbox as team member.",
+      ],
+      [
+        "metis",
+        "Agent 'metis' is read-only (pre-planning consultant). Cannot write to mailbox as team member. Use delegate-task for pre-planning analysis instead.",
+      ],
+      [
+        "momus",
+        "Agent 'momus' is read-only (plan reviewer). Cannot write to mailbox as team member. Use delegate-task for plan review instead.",
+      ],
+      [
+        "prometheus",
+        "Agent 'prometheus' is plan-mode-only; can only write to .sisyphus/*.md (enforced by prometheusMdOnly hook). Cannot write to team mailbox. Use category: 'plan' instead.",
+      ],
+    ] as const
+
+    // when
+    for (const [subagentType, expectedMessage] of cases) {
+      // then
+      expect(() =>
+        parseMember({ kind: "subagent_type", name: "x", subagent_type: subagentType }),
+      ).toThrow(expectedMessage)
+    }
+  })
+
   test("parseMember returns valid category member", () => {
     // given
     const member = { name: "m1", kind: "category", category: "deep", prompt: "impl X" }
@@ -126,6 +168,20 @@ describe("team-mode types", () => {
 
     // then
     expect(result).toMatchObject(member)
+  })
+
+  test("parseMember returns parsed hephaestus and atlas subagent members", () => {
+    // given
+    const hephaestusMember = { name: "m1", kind: "subagent_type", subagent_type: "hephaestus" }
+    const atlasMember = { name: "m1", kind: "subagent_type", subagent_type: "atlas" }
+
+    // when
+    const hephaestusResult = parseMember(hephaestusMember)
+    const atlasResult = parseMember(atlasMember)
+
+    // then
+    expect(hephaestusResult).toMatchObject(hephaestusMember)
+    expect(atlasResult).toMatchObject(atlasMember)
   })
 
   test("category requires prompt", () => {
