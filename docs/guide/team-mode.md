@@ -42,7 +42,7 @@ Teams live as directories under `~/.omo/teams/{name}/config.json`:
   "leadAgentId": "lead",
   "members": [
     { "kind": "subagent_type", "name": "lead", "subagent_type": "atlas" },
-    { "kind": "subagent_type", "name": "scout", "subagent_type": "explore" },
+    { "kind": "category", "name": "scout", "category": "deep", "prompt": "Scout the codebase for auth patterns." },
     { "kind": "category", "name": "drafter", "category": "deep", "prompt": "Draft a refactor plan based on findings." }
   ]
 }
@@ -110,6 +110,7 @@ Set `tmux_visualization: true`. Requires running inside a tmux session and tmux 
 ```
 ~/.omo/
 ├── teams/{name}/config.json          # declared specs
+├── .highwatermark                     # parity marker for runtime state
 └── runtime/{teamRunId}/
     ├── state.json                    # durable runtime state
     ├── inboxes/{member}/{uuid}.json  # mailbox (atomic per-message files)
