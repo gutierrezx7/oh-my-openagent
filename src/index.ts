@@ -2,6 +2,7 @@ import { initConfigContext } from "./cli/config-manager/config-context"
 import type { Hooks, Plugin, PluginModule } from "@opencode-ai/plugin"
 
 import type { HookName } from "./config"
+import type { ExecutorContext } from "./tools/delegate-task/executor-types"
 
 import { createHooks } from "./create-hooks"
 import { createManagers } from "./create-managers"
@@ -61,8 +62,22 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
     try {
       const { ensureBaseDirs, resolveBaseDir } = await import("./features/team-mode/team-registry/paths")
       const { checkTeamModeDependencies } = await import("./features/team-mode/deps")
+      const { resumeAllTeams } = await import("./features/team-mode/team-state-store/resume")
+      const resumeContext: ExecutorContext = {
+        client: ctx.client,
+        directory: ctx.directory,
+        manager: {} as ExecutorContext["manager"],
+      }
       await checkTeamModeDependencies(pluginConfig.team_mode)
       await ensureBaseDirs(resolveBaseDir(pluginConfig.team_mode))
+      if (pluginConfig.disabled_skills?.includes("team-mode")) {
+        console.warn(
+          "[team-mode] enabled=true but team-mode skill is disabled; skill docs hidden but tools still registered (D-29)",
+        )
+      }
+      await resumeAllTeams(resumeContext, pluginConfig.team_mode).catch((err) => {
+        console.warn("[team-mode] resume failed (non-fatal):", err)
+      })
     } catch (err) {
       console.warn("[team-mode] init failed:", err)
     }
