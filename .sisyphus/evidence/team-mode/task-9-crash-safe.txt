@@ -1,0 +1,2 @@
+PASS: `bun test src/features/team-mode/team-state-store/`
+Scenario: loadRuntimeState ignored a crash-left tmp artifact and kept the last committed state.json parseable and unchanged.

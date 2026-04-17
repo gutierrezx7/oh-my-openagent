@@ -1,0 +1,2 @@
+PASS: `bun test src/features/team-mode/team-state-store/`
+Scenario: createRuntimeState wrote state.json with status=`creating`, valid UUID teamRunId, and config-derived bounds.
