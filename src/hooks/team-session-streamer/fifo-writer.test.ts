@@ -1,0 +1,79 @@
+/// <reference types="bun-types" />
+
+import { afterEach, describe, expect, test } from "bun:test"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+
+import { ensureTeamMemberFifo } from "../../features/team-mode/team-layout-tmux/ensure-team-member-fifo"
+import { writeTeamSessionFifo } from "./fifo-writer"
+
+const TEAM_ROOT = "/tmp/omo-team"
+
+describe("writeTeamSessionFifo", () => {
+  const registeredPaths: string[] = []
+
+  afterEach(async () => {
+    await Promise.all(registeredPaths.splice(0).map(async (registeredPath) => {
+      await rm(registeredPath, { recursive: true, force: true })
+    }))
+  })
+
+  test("appends text to the team member stream file so multiple readers observe the same content", async () => {
+    // given
+    const scratchDir = await mkdtemp(path.join(tmpdir(), "team-stream-"))
+    registeredPaths.push(scratchDir)
+    const teamRunId = `qa-stream-${path.basename(scratchDir)}`
+    registeredPaths.push(path.join(TEAM_ROOT, teamRunId))
+    const streamPath = await ensureTeamMemberFifo(teamRunId, "member-a")
+
+    // when
+    await writeTeamSessionFifo(streamPath, "hello ")
+    await writeTeamSessionFifo(streamPath, "world\n")
+    await writeTeamSessionFifo(streamPath, "next-line\n")
+
+    // then
+    const readerOne = await readFile(streamPath, "utf8")
+    const readerTwo = await readFile(streamPath, "utf8")
+    expect(readerOne).toBe("hello world\nnext-line\n")
+    expect(readerTwo).toBe(readerOne)
+  })
+
+  test("creates the stream file on first ensureTeamMemberFifo and allows concurrent appends to preserve order", async () => {
+    // given
+    const scratchDir = await mkdtemp(path.join(tmpdir(), "team-stream-"))
+    registeredPaths.push(scratchDir)
+    const teamRunId = `qa-concurrent-${path.basename(scratchDir)}`
+    registeredPaths.push(path.join(TEAM_ROOT, teamRunId))
+    const streamPath = await ensureTeamMemberFifo(teamRunId, "member-b")
+
+    // when
+    const writes: Promise<void>[] = []
+    for (let i = 1; i <= 20; i++) {
+      writes.push(writeTeamSessionFifo(streamPath, `n=${i}\n`))
+    }
+    await Promise.all(writes)
+
+    // then
+    const content = await readFile(streamPath, "utf8")
+    for (let i = 1; i <= 20; i++) {
+      expect(content).toContain(`n=${i}\n`)
+    }
+  })
+
+  test("is a no-op for empty text", async () => {
+    // given
+    const scratchDir = await mkdtemp(path.join(tmpdir(), "team-stream-"))
+    registeredPaths.push(scratchDir)
+    const teamRunId = `qa-empty-${path.basename(scratchDir)}`
+    registeredPaths.push(path.join(TEAM_ROOT, teamRunId))
+    const streamPath = await ensureTeamMemberFifo(teamRunId, "member-c")
+
+    // when
+    await writeTeamSessionFifo(streamPath, "")
+
+    // then
+    const content = await readFile(streamPath, "utf8")
+    expect(content).toBe("")
+  })
+})
