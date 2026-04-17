@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from "bun:test"
+import { mkdir, rm, writeFile } from "node:fs/promises"
+import path from "node:path"
 
 let loadRuntimeStateImplementation: typeof import("../team-state-store/store").loadRuntimeState = async () => {
   throw new Error("loadRuntimeStateImplementation not set")
@@ -36,6 +38,38 @@ void listUnreadMessages
 void listTasks
 
 describe("aggregateStatus", () => {
+  test("surfaces stale locks from claims directory", async () => {
+    // given
+    const baseDir = "/tmp/team-mode-status-stale-lock"
+    const claimsDir = path.join(baseDir, "runtime", "team-run-3", "tasks", "claims")
+    await rm(baseDir, { force: true, recursive: true })
+    await mkdir(claimsDir, { recursive: true })
+    await writeFile(path.join(claimsDir, "task-claimed.lock"), "owner\n999999\n1\n")
+    const config = { base_dir: baseDir } satisfies TeamModeConfig
+    loadRuntimeStateImplementation = async () => ({
+      version: 1,
+      teamRunId: "team-run-3",
+      teamName: "team-gamma",
+      specSource: "project",
+      createdAt: 123,
+      status: "active",
+      leadSessionId: "lead-3",
+      members: [],
+      shutdownRequests: [],
+      bounds: { maxMembers: 8, maxParallelMembers: 4, maxMessagesPerRun: 10000, maxWallClockMinutes: 120, maxMemberTurns: 500 },
+    })
+    listUnreadMessagesImplementation = async () => []
+    listTasksImplementation = async () => [
+      { version: 1, id: "task-claimed", subject: "a", description: "a", status: "claimed", createdAt: 1, updatedAt: 1, blocks: [], blockedBy: [] },
+    ]
+
+    // when
+    const result = await aggregateStatus("team-run-3", config)
+
+    // then
+    expect(result.staleLocks).toEqual([path.join(claimsDir, "task-claimed.lock")])
+  })
+
   test("aggregates members plus tasks plus unread counts", async () => {
     // given
     const config = { base_dir: "/tmp/team-mode" } satisfies TeamModeConfig
@@ -84,6 +118,7 @@ describe("aggregateStatus", () => {
       specSource: "project",
       createdAt: 123,
       status: "active",
+      leadSessionId: "lead-2",
       members: [],
       shutdownRequests: [],
       bounds: { maxMembers: 8, maxParallelMembers: 4, maxMessagesPerRun: 10000, maxWallClockMinutes: 120, maxMemberTurns: 500 },
@@ -92,16 +127,21 @@ describe("aggregateStatus", () => {
     listTasksImplementation = async () => []
     const backgroundManager = {
       getTasksByParentSession: () => [
-        { status: "running" },
-        { status: "running" },
-        { status: "running" },
-        { status: "running" },
-        { status: "running" },
-        { status: "pending" },
-        { status: "pending" },
-        { status: "pending" },
+        { status: "running", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
+        { status: "running", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
+        { status: "running", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
+        { status: "running", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
+        { status: "running", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
+        { status: "pending", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
+        { status: "pending", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
+        { status: "pending", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
       ],
-    } satisfies Pick<BackgroundManager, "getTasksByParentSession">
+      getConcurrencyCounts: () => ({ running: 5, queued: 3 }),
+      listTasksByParentSession: () => [{}, {}, {}, {}],
+    } satisfies Pick<BackgroundManager, "getTasksByParentSession"> & {
+      getConcurrencyCounts?: (modelOrUndefined?: string) => { running: number; queued: number }
+      listTasksByParentSession?: (sessionID: string) => unknown[]
+    }
 
     // when
     const result = await aggregateStatus("team-run-2", config, backgroundManager)
@@ -109,5 +149,6 @@ describe("aggregateStatus", () => {
     // then
     expect(result.concurrency.runningOnSameModel).toBe(5)
     expect(result.concurrency.queuedOnSameModel).toBe(3)
+    expect(result.concurrency.teamRunIdSpecific).toBe(4)
   })
 })

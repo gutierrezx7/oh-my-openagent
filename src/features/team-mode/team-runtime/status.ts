@@ -1,9 +1,13 @@
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { RuntimeState, Task } from "../types"
+import { detectStaleLock } from "../team-state-store/locks"
 import { loadRuntimeState } from "../team-state-store/store"
 import { listUnreadMessages } from "../team-mailbox/inbox"
 import { listTasks } from "../team-tasklist/list"
+import { getTasksDir, resolveBaseDir } from "../team-registry/paths"
+import { readdir } from "node:fs/promises"
+import path from "node:path"
 
 export interface TeamStatus {
   teamName: string
@@ -35,11 +39,29 @@ export interface TeamStatus {
     teamRunIdSpecific?: number
   }
   bounds: RuntimeState["bounds"]
+  staleLocks: string[]
 }
 
 type ConcurrencyCounts = {
   running: number
   queued: number
+}
+
+type TeamBackgroundManager = BackgroundManager & {
+  getConcurrencyCounts?: (modelOrUndefined?: string) => ConcurrencyCounts
+  listTasksByParentSession?: (sessionID: string) => Array<unknown>
+}
+
+function getPrimaryModelKey(bgMgr: TeamBackgroundManager | undefined, leadSessionId: string | undefined): string | undefined {
+  if (!bgMgr || !leadSessionId) return undefined
+
+  const tasksByParent = bgMgr.getTasksByParentSession(leadSessionId)
+  if (tasksByParent.length === 0) return undefined
+
+  const firstModel = tasksByParent[0]?.model
+  if (!firstModel) return undefined
+
+  return `${firstModel.providerID}/${firstModel.modelID}`
 }
 
 function isTaskStatus(status: string): status is Task["status"] {
@@ -66,12 +88,19 @@ function countTasks(tasks: Task[]): TeamStatus["tasks"] {
   return counts
 }
 
-function resolveConcurrencyCounts(bgMgr: BackgroundManager | undefined, teamRunId: string): ConcurrencyCounts {
-  if (!bgMgr) return { running: 0, queued: 0 }
+function resolveConcurrencyCounts(bgMgr: TeamBackgroundManager | undefined, leadSessionId: string | undefined): ConcurrencyCounts {
+  if (!bgMgr || !leadSessionId) return { running: 0, queued: 0 }
 
-  const teamTasks = bgMgr.getTasksByParentSession(teamRunId)
-  const running = teamTasks.filter((task) => task.status === "running").length
-  const queued = teamTasks.filter((task) => task.status === "pending").length
+  const modelKey = getPrimaryModelKey(bgMgr, leadSessionId)
+  const tasksByParent = bgMgr.getTasksByParentSession(leadSessionId)
+  const counts = bgMgr.getConcurrencyCounts?.(modelKey)
+
+  if (counts) {
+    return { running: counts.running, queued: counts.queued }
+  }
+
+  const running = tasksByParent.filter((task) => task.status === "running").length
+  const queued = tasksByParent.filter((task) => task.status === "pending").length
 
   return { running, queued }
 }
@@ -89,7 +118,20 @@ export async function aggregateStatus(
     })),
   )
   const tasks = await listTasks(teamRunId, config)
-  const concurrencyCounts = resolveConcurrencyCounts(bgMgr, teamRunId)
+  const teamBackgroundManager: TeamBackgroundManager | undefined = bgMgr
+  const concurrencyCounts = resolveConcurrencyCounts(teamBackgroundManager, runtimeState.leadSessionId)
+  const teamRunIdSpecific = teamBackgroundManager?.listTasksByParentSession?.(runtimeState.leadSessionId ?? teamRunId)?.length
+  const baseDir = resolveBaseDir(config)
+  const claimsDir = path.join(getTasksDir(baseDir, teamRunId), "claims")
+  const staleLockEntries = await readdir(claimsDir, { withFileTypes: true }).catch(() => [])
+  const staleLockPaths = await Promise.all(
+    staleLockEntries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".lock"))
+      .map(async (entry) => {
+        const lockPath = path.join(claimsDir, entry.name)
+        return (await detectStaleLock(lockPath, 300_000)) ? lockPath : undefined
+      }),
+  )
 
   return {
     teamName: runtimeState.teamName,
@@ -111,7 +153,9 @@ export async function aggregateStatus(
     concurrency: {
       runningOnSameModel: concurrencyCounts.running,
       queuedOnSameModel: concurrencyCounts.queued,
+      teamRunIdSpecific,
     },
     bounds: runtimeState.bounds,
+    staleLocks: staleLockPaths.filter((lockPath): lockPath is string => lockPath !== undefined),
   }
 }
