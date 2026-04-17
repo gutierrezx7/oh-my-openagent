@@ -3,7 +3,7 @@ import type { ToolContext } from "@opencode-ai/plugin/tool"
 import { z } from "zod"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
-import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
+import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { loadTeamSpec, normalizeTeamSpecInput } from "../team-registry/loader"
@@ -11,7 +11,7 @@ import { validateSpec } from "../team-registry/validator"
 import { createTeamRun } from "../team-runtime/create"
 import { approveShutdown, deleteTeam, rejectShutdown, requestShutdownOfMember } from "../team-runtime/shutdown"
 import { listActiveTeams, loadRuntimeState } from "../team-state-store/store"
-import { TeamSpecSchema, type RuntimeState } from "../types"
+import { TeamSpecSchema, type RuntimeState, type TeamSpec } from "../types"
 
 const ACTIVE_RUNTIME_STATUSES = new Set<RuntimeState["status"]>(["creating", "active", "shutdown_requested"])
 
@@ -38,7 +38,6 @@ const TeamRejectShutdownArgsSchema = z.object({
 type TeamLifecycleToolContext = ToolContext & {
   sessionID: string
   directory?: string
-  client?: ExecutorContext["client"]
 }
 
 type TeamParticipant = { role: "lead" | "member"; memberName: string }
@@ -62,17 +61,22 @@ function resolveProjectRoot(toolContext: TeamLifecycleToolContext): string {
   return typeof toolContext.directory === "string" ? toolContext.directory : process.cwd()
 }
 
-function resolveRuntimeClient(toolContext: TeamLifecycleToolContext): ExecutorContext["client"] {
-  if (!toolContext.client) throw new Error("team-mode lifecycle tools require tool context client")
-  return toolContext.client
-}
-
 function serializeResult(result: Record<string, unknown>): string {
   return JSON.stringify(result)
 }
 
-function parseInlineTeamSpec(rawSpec: unknown) {
-  const parsedSpec = TeamSpecSchema.parse(normalizeTeamSpecInput(rawSpec))
+function parseInlineTeamSpec(rawSpec: unknown): TeamSpec {
+  let specObject: unknown = rawSpec
+  if (typeof rawSpec === "string") {
+    try {
+      specObject = JSON.parse(rawSpec)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`inline_spec is a string but not valid JSON: ${message}`)
+    }
+  }
+
+  const parsedSpec = TeamSpecSchema.parse(normalizeTeamSpecInput(specObject))
   validateSpec(parsedSpec)
   return parsedSpec
 }
@@ -95,7 +99,12 @@ async function resolveParticipant(teamRunId: string, sessionID: string, config: 
   return member ? { runtimeState, participant: { role: "member", memberName: member.name } } : { runtimeState }
 }
 
-export function createTeamCreateTool(config: TeamModeConfig, bgMgr: BackgroundManager, tmuxMgr?: TmuxSessionManager): ToolDefinition {
+export function createTeamCreateTool(
+  config: TeamModeConfig,
+  client: OpencodeClient,
+  bgMgr: BackgroundManager,
+  tmuxMgr?: TmuxSessionManager,
+): ToolDefinition {
   return tool({
     description: "Create a team run from a named or inline team spec.",
     args: { teamName: tool.schema.string().optional(), inline_spec: tool.schema.unknown().optional(), leadSessionId: tool.schema.string().optional() },
@@ -110,13 +119,20 @@ export function createTeamCreateTool(config: TeamModeConfig, bgMgr: BackgroundMa
       if (participantRuntime && (participantRuntime.teamName !== spec.name || participantRuntime.leadSessionId !== leadSessionId)) {
         throw new Error(`team_create denied: session is already a participant of team ${participantRuntime.teamRunId}`)
       }
-      const runtimeState = await createTeamRun(spec, leadSessionId, { client: resolveRuntimeClient(runtimeContext), manager: bgMgr, directory: projectRoot }, config, bgMgr, tmuxMgr)
+      const runtimeState = await createTeamRun(spec, leadSessionId, { client, manager: bgMgr, directory: projectRoot }, config, bgMgr, tmuxMgr)
       return serializeResult({ teamRunId: runtimeState.teamRunId, runtimeState: sanitizeRuntimeState(runtimeState) })
     },
   })
 }
 
-export function createTeamDeleteTool(config: TeamModeConfig, _bgMgr: BackgroundManager, tmuxMgr?: TmuxSessionManager): ToolDefinition {
+export function createTeamDeleteTool(
+  config: TeamModeConfig,
+  client: OpencodeClient,
+  backgroundManager: BackgroundManager,
+  tmuxMgr?: TmuxSessionManager,
+): ToolDefinition {
+  void client
+
   return tool({
     description: "Delete a completed or shutdown-approved team run.",
     args: { teamRunId: tool.schema.string() },
@@ -125,12 +141,14 @@ export function createTeamDeleteTool(config: TeamModeConfig, _bgMgr: BackgroundM
       const runtimeContext = toolContext as TeamLifecycleToolContext
       const { runtimeState, participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       if (participant?.role !== "lead") throw new Error("team_delete is lead-only")
-      return serializeResult({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, _bgMgr)) })
+      return serializeResult({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, backgroundManager)) })
     },
   })
 }
 
-export function createTeamShutdownRequestTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamShutdownRequestTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "Request shutdown for a team member.",
     args: { teamRunId: tool.schema.string(), targetMemberName: tool.schema.string() },
@@ -145,7 +163,9 @@ export function createTeamShutdownRequestTool(config: TeamModeConfig): ToolDefin
   })
 }
 
-export function createTeamApproveShutdownTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamApproveShutdownTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "Approve a pending shutdown request.",
     args: { teamRunId: tool.schema.string(), memberName: tool.schema.string() },
@@ -160,7 +180,9 @@ export function createTeamApproveShutdownTool(config: TeamModeConfig): ToolDefin
   })
 }
 
-export function createTeamRejectShutdownTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamRejectShutdownTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "Reject a pending shutdown request.",
     args: { teamRunId: tool.schema.string(), memberName: tool.schema.string(), reason: tool.schema.string() },

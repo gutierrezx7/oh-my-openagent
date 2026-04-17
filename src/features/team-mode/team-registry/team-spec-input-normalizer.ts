@@ -12,6 +12,52 @@ function getMemberName(value: unknown): string | undefined {
   return isJsonRecord(value) && typeof value.name === "string" ? value.name : undefined
 }
 
+function normalizeMemberNameStem(value: string): string {
+  const normalizedStem = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+
+  return normalizedStem.length > 0 ? normalizedStem : "member"
+}
+
+function deriveMemberNameStem(member: JsonRecord): string {
+  if (member.kind === "category" && typeof member.category === "string") {
+    return normalizeMemberNameStem(member.category)
+  }
+
+  if (member.kind === "subagent_type" && typeof member.subagent_type === "string") {
+    return normalizeMemberNameStem(member.subagent_type)
+  }
+
+  return "member"
+}
+
+function assignGeneratedMemberNames(rawMembers: unknown[]): unknown[] {
+  const usedNames = new Set(rawMembers.flatMap((member) => {
+    const memberName = getMemberName(member)
+    return memberName === undefined ? [] : [memberName]
+  }))
+
+  return rawMembers.map((member) => {
+    if (!isJsonRecord(member) || getMemberName(member) !== undefined) {
+      return member
+    }
+
+    const stem = deriveMemberNameStem(member)
+    let suffix = 1
+    let generatedName = `${stem}-${suffix}`
+    while (usedNames.has(generatedName)) {
+      suffix += 1
+      generatedName = `${stem}-${suffix}`
+    }
+
+    usedNames.add(generatedName)
+    return { ...member, name: generatedName }
+  })
+}
+
 function stripMemberLeadFlag(value: unknown): unknown {
   if (!isJsonRecord(value) || !Object.hasOwn(value, "isLead")) {
     return value
@@ -50,6 +96,8 @@ export function normalizeTeamSpecInput(raw: unknown): unknown {
         leadAgentId = leadName
       }
     }
+
+    normalizedMembers = assignGeneratedMemberNames(normalizedMembers)
 
     normalizedMembers = normalizedMembers.map((member) => {
       const memberName = getMemberName(member)
