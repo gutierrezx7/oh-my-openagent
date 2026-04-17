@@ -48,6 +48,13 @@ export class TeamDeletingError extends Error {
   }
 }
 
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "ENOENT"
+}
+
 async function assertTeamAcceptsMessages(teamRunId: string, config: TeamModeConfig): Promise<void> {
   try {
     const runtimeState = await loadRuntimeState(teamRunId, config)
@@ -55,8 +62,7 @@ async function assertTeamAcceptsMessages(teamRunId: string, config: TeamModeConf
       throw new TeamDeletingError()
     }
   } catch (error) {
-    const nodeError = error as NodeJS.ErrnoException
-    if (nodeError.code === "ENOENT") {
+    if (isMissingPathError(error)) {
       return
     }
 
@@ -88,8 +94,7 @@ async function getUnreadSizeBytes(inboxDir: string): Promise<number> {
 
     return sizes.reduce((totalBytes, fileSize) => totalBytes + fileSize, 0)
   } catch (error) {
-    const err = error as NodeJS.ErrnoException
-    if (err.code === "ENOENT") {
+    if (isMissingPathError(error)) {
       return 0
     }
 
@@ -102,8 +107,7 @@ async function fileExists(filePath: string): Promise<boolean> {
     await stat(filePath)
     return true
   } catch (error) {
-    const err = error as NodeJS.ErrnoException
-    if (err.code === "ENOENT") {
+    if (isMissingPathError(error)) {
       return false
     }
 
@@ -118,12 +122,13 @@ export async function sendMessage(
   context: SendContext,
 ): Promise<{ messageId: string; deliveredTo: string[] }> {
   const serializedMessage = `${JSON.stringify(message, null, 2)}\n`
+  const serializedMessageBytes = Buffer.byteLength(serializedMessage, "utf8")
   const payloadBytes = Buffer.byteLength(message.body, "utf8")
   if (payloadBytes > config.message_payload_max_bytes) {
     throw new PayloadTooLargeError()
   }
 
-   await assertTeamAcceptsMessages(teamRunId, config)
+  await assertTeamAcceptsMessages(teamRunId, config)
 
   if (message.to === "*" && !context.isLead) {
     throw new BroadcastNotPermittedError()
@@ -138,7 +143,7 @@ export async function sendMessage(
 
     await withLock(`${inboxDir}.lock`, async () => {
       const unreadSizeBytes = await getUnreadSizeBytes(inboxDir)
-      const nextUnreadSizeBytes = unreadSizeBytes + Buffer.byteLength(serializedMessage, "utf8")
+      const nextUnreadSizeBytes = unreadSizeBytes + serializedMessageBytes
       if (nextUnreadSizeBytes > config.recipient_unread_max_bytes) {
         throw new RecipientBackpressureError()
       }
