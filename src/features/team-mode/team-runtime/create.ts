@@ -7,6 +7,7 @@ import type { ExecutorContext } from "../../../tools/delegate-task/executor-type
 import type { BackgroundTask } from "../../background-agent/types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
+import { ensureTeamMemberFifo } from "../team-layout-tmux/ensure-team-member-fifo"
 import { ensureBaseDirs, getInboxDir, getTeamSpecPath, resolveBaseDir } from "../team-registry/paths"
 import { createRuntimeState, listActiveTeams, loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { RuntimeState, TeamSpec } from "../types"
@@ -108,6 +109,7 @@ export async function createTeamRun(
   await ensureBaseDirs(baseDir)
   const runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
   await Promise.all(spec.members.map(async (member) => mkdir(getInboxDir(baseDir, runtimeState.teamRunId, member.name), { recursive: true })))
+  await Promise.all(spec.members.map(async (member) => ensureTeamMemberFifo(runtimeState.teamRunId, member.name)))
 
   const deadlineAt = Date.now() + (config.max_wall_clock_minutes * 60_000)
   const resources: SpawnedMemberResource[] = spec.members.map(() => ({}))

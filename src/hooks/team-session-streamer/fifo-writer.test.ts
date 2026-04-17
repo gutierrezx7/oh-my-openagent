@@ -95,4 +95,21 @@ describe("writeTeamSessionFifo", () => {
     const content = await readFile(streamPath, "utf8")
     expect(content).toBe("early-line-1\nearly-line-2\nlate-line-3\n")
   })
+
+  test("creates the parent directory on demand so early hook writes do not vanish to ENOENT", async () => {
+    // given
+    const scratchDir = await mkdtemp(path.join(tmpdir(), "team-stream-"))
+    registeredPaths.push(scratchDir)
+    const teamRunId = `qa-noent-${path.basename(scratchDir)}`
+    const streamRoot = path.join(TEAM_ROOT, teamRunId)
+    registeredPaths.push(streamRoot)
+    const streamPath = path.join(streamRoot, "member-z.fifo")
+
+    // when
+    await writeTeamSessionFifo(streamPath, "arrived-before-ensure\n")
+
+    // then
+    const content = await readFile(streamPath, "utf8")
+    expect(content).toBe("arrived-before-ensure\n")
+  })
 })
