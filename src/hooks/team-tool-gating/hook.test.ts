@@ -83,6 +83,19 @@ describe("createTeamToolGating", () => {
     await expect(result).resolves.toBeUndefined()
   })
 
+  test("allows team_list from a fresh session", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
+
+    // when
+    const result = runHook("team_list", "fresh-session", {}, undefined, baseDir)
+
+    // then
+    await expect(result).resolves.toBeUndefined()
+  })
+
   test("rejects team_create when the caller is already a team member", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))

@@ -12,7 +12,6 @@ const UNIVERSAL_TOOL_NAMES = new Set([
   "team_task_update",
   "team_task_get",
   "team_status",
-  "team_list",
 ])
 
 type TeamParticipant =
@@ -129,14 +128,11 @@ export function createTeamToolGating(_ctx: PluginInput, config: TeamModeConfig |
         return
       }
 
-      if (UNIVERSAL_TOOL_NAMES.has(toolName)) {
-        if (toolName === "team_list") {
-          if (participant.role === "neither") {
-            throw new Error("team-mode tool denied: not a participant of team unknown")
-          }
+      if (toolName === "team_list") {
+        return
+      }
 
-          return
-        }
+      if (UNIVERSAL_TOOL_NAMES.has(toolName)) {
 
         if (
           (participant.role === "lead" || participant.role === "member")
@@ -145,7 +141,11 @@ export function createTeamToolGating(_ctx: PluginInput, config: TeamModeConfig |
           return
         }
 
-        throw new Error(`team-mode tool denied: not a participant of team ${teamRunId ?? "unknown"}`)
+        throw new Error(
+          teamRunId === undefined
+            ? `team-mode tool ${toolName} requires teamRunId argument`
+            : `team-mode tool ${toolName} denied: not a participant of team ${teamRunId}`,
+        )
       }
     },
   }
