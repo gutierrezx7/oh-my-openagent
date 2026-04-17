@@ -6,6 +6,21 @@ import type {
 } from "../agents/dynamic-agent-prompt-builder"
 import type { OhMyOpenCodeConfig } from "../config"
 import { isInteractiveBashEnabled } from "../create-runtime-tmux-config"
+import {
+  createTeamApproveShutdownTool,
+  createTeamCreateTool,
+  createTeamDeleteTool,
+  createTeamRejectShutdownTool,
+  createTeamShutdownRequestTool,
+} from "../features/team-mode/tools/lifecycle"
+import { createTeamSendMessageTool } from "../features/team-mode/tools/messaging"
+import { createTeamListTool, createTeamStatusTool } from "../features/team-mode/tools/query"
+import {
+  createTeamTaskCreateTool,
+  createTeamTaskGetTool,
+  createTeamTaskListTool,
+  createTeamTaskUpdateTool,
+} from "../features/team-mode/tools/tasks"
 import * as openclawRuntimeDispatch from "../openclaw/runtime-dispatch"
 import type { PluginContext, ToolsRecord } from "./types"
 
@@ -56,6 +71,18 @@ type ToolRegistryFactories = {
   createTaskList: typeof createTaskList
   createTaskUpdateTool: typeof createTaskUpdateTool
   createHashlineEditTool: typeof createHashlineEditTool
+  createTeamApproveShutdownTool: typeof createTeamApproveShutdownTool
+  createTeamCreateTool: typeof createTeamCreateTool
+  createTeamDeleteTool: typeof createTeamDeleteTool
+  createTeamRejectShutdownTool: typeof createTeamRejectShutdownTool
+  createTeamShutdownRequestTool: typeof createTeamShutdownRequestTool
+  createTeamSendMessageTool: typeof createTeamSendMessageTool
+  createTeamTaskCreateTool: typeof createTeamTaskCreateTool
+  createTeamTaskGetTool: typeof createTeamTaskGetTool
+  createTeamTaskListTool: typeof createTeamTaskListTool
+  createTeamTaskUpdateTool: typeof createTeamTaskUpdateTool
+  createTeamStatusTool: typeof createTeamStatusTool
+  createTeamListTool: typeof createTeamListTool
 }
 
 const defaultToolRegistryFactories: ToolRegistryFactories = {
@@ -77,6 +104,18 @@ const defaultToolRegistryFactories: ToolRegistryFactories = {
   createTaskList,
   createTaskUpdateTool,
   createHashlineEditTool,
+  createTeamApproveShutdownTool,
+  createTeamCreateTool,
+  createTeamDeleteTool,
+  createTeamRejectShutdownTool,
+  createTeamShutdownRequestTool,
+  createTeamSendMessageTool,
+  createTeamTaskCreateTool,
+  createTeamTaskGetTool,
+  createTeamTaskListTool,
+  createTeamTaskUpdateTool,
+  createTeamStatusTool,
+  createTeamListTool,
 }
 
 export type ToolRegistryResult = {
@@ -261,6 +300,31 @@ export function createToolRegistry(args: {
     ? { edit: factories.createHashlineEditTool(ctx) }
     : {}
 
+  const teamModeToolsRecord: Record<string, ToolDefinition> = pluginConfig.team_mode?.enabled
+    ? {
+        team_create: factories.createTeamCreateTool(
+          pluginConfig.team_mode,
+          managers.backgroundManager,
+          managers.tmuxSessionManager,
+        ),
+        team_delete: factories.createTeamDeleteTool(
+          pluginConfig.team_mode,
+          managers.backgroundManager,
+          managers.tmuxSessionManager,
+        ),
+        team_shutdown_request: factories.createTeamShutdownRequestTool(pluginConfig.team_mode),
+        team_approve_shutdown: factories.createTeamApproveShutdownTool(pluginConfig.team_mode),
+        team_reject_shutdown: factories.createTeamRejectShutdownTool(pluginConfig.team_mode),
+        team_send_message: factories.createTeamSendMessageTool(pluginConfig.team_mode),
+        team_task_create: factories.createTeamTaskCreateTool(pluginConfig.team_mode),
+        team_task_list: factories.createTeamTaskListTool(pluginConfig.team_mode),
+        team_task_update: factories.createTeamTaskUpdateTool(pluginConfig.team_mode),
+        team_task_get: factories.createTeamTaskGetTool(pluginConfig.team_mode),
+        team_status: factories.createTeamStatusTool(pluginConfig.team_mode, managers.backgroundManager),
+        team_list: factories.createTeamListTool(pluginConfig.team_mode),
+      }
+    : {}
+
   const allTools: Record<string, ToolDefinition> = {
     ...factories.builtinTools,
     ...factories.createGrepTools(ctx),
@@ -274,6 +338,7 @@ export function createToolRegistry(args: {
     skill_mcp: skillMcpTool,
     skill: skillTool,
     ...(interactiveBashEnabled ? { interactive_bash: factories.interactive_bash } : {}),
+    ...teamModeToolsRecord,
     ...taskToolsRecord,
     ...hashlineToolsRecord,
   }
