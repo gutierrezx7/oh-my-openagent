@@ -7,6 +7,7 @@ import { log } from "../../../shared/logger"
 import { TeamSpecSchema } from "../types"
 
 import type { TeamSpec } from "../types"
+import { normalizeTeamSpecInput } from "./team-spec-input-normalizer"
 import { discoverTeamSpecs, getTeamSpecPath, resolveBaseDir } from "./paths"
 import { TeamSpecValidationError, validateSpec } from "./validator"
 
@@ -120,9 +121,10 @@ async function loadTeamSpecFromEntry(entry: DiscoveredTeamSpec): Promise<TeamSpe
     )
   }
 
-  const parsedSpec = TeamSpecSchema.safeParse(rawSpec)
+  const normalizedRawSpec = normalizeTeamSpecInput(rawSpec)
+  const parsedSpec = TeamSpecSchema.safeParse(normalizedRawSpec)
   if (!parsedSpec.success) {
-    throw createZodValidationError(rawSpec, parsedSpec.error)
+    throw createZodValidationError(normalizedRawSpec, parsedSpec.error)
   }
 
   validateSpec(parsedSpec.data)
@@ -130,6 +132,7 @@ async function loadTeamSpecFromEntry(entry: DiscoveredTeamSpec): Promise<TeamSpe
 }
 
 export { TeamSpecValidationError } from "./validator"
+export { normalizeTeamSpecInput } from "./team-spec-input-normalizer"
 
 export async function loadTeamSpec(
   teamName: string,

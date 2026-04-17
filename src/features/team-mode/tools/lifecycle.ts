@@ -6,7 +6,8 @@ import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
-import { loadTeamSpec } from "../team-registry/loader"
+import { loadTeamSpec, normalizeTeamSpecInput } from "../team-registry/loader"
+import { validateSpec } from "../team-registry/validator"
 import { createTeamRun } from "../team-runtime/create"
 import { approveShutdown, deleteTeam, rejectShutdown, requestShutdownOfMember } from "../team-runtime/shutdown"
 import { listActiveTeams, loadRuntimeState } from "../team-state-store/store"
@@ -21,7 +22,7 @@ const TeamCreateArgsSchema = z.object({
 }).superRefine((value, ctx) => {
   const optionCount = Number(value.teamName !== undefined) + Number(value.inline_spec !== undefined)
   if (optionCount !== 1) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Provide exactly one of teamName or inline_spec." })
+    ctx.addIssue({ code: "custom", message: "Provide exactly one of teamName or inline_spec." })
   }
 })
 
@@ -70,6 +71,12 @@ function serializeResult(result: Record<string, unknown>): string {
   return JSON.stringify(result)
 }
 
+function parseInlineTeamSpec(rawSpec: unknown) {
+  const parsedSpec = TeamSpecSchema.parse(normalizeTeamSpecInput(rawSpec))
+  validateSpec(parsedSpec)
+  return parsedSpec
+}
+
 async function findParticipantRuntime(sessionID: string, config: TeamModeConfig): Promise<RuntimeState | undefined> {
   for (const activeTeam of await listActiveTeams(config)) {
     const runtimeState = await loadRuntimeState(activeTeam.teamRunId, config).catch(() => undefined)
@@ -98,7 +105,7 @@ export function createTeamCreateTool(config: TeamModeConfig, bgMgr: BackgroundMa
       const leadSessionId = args.leadSessionId ?? runtimeContext.sessionID
       if (!leadSessionId) throw new Error("team_create requires leadSessionId or tool context sessionID")
       const projectRoot = resolveProjectRoot(runtimeContext)
-      const spec = args.teamName ? await loadTeamSpec(args.teamName, config, projectRoot) : TeamSpecSchema.parse(args.inline_spec)
+      const spec = args.teamName ? await loadTeamSpec(args.teamName, config, projectRoot) : parseInlineTeamSpec(args.inline_spec)
       const participantRuntime = await findParticipantRuntime(runtimeContext.sessionID, config)
       if (participantRuntime && (participantRuntime.teamName !== spec.name || participantRuntime.leadSessionId !== leadSessionId)) {
         throw new Error(`team_create denied: session is already a participant of team ${participantRuntime.teamRunId}`)

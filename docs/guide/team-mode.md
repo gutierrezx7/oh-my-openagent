@@ -35,20 +35,19 @@ Teams live as directories under `~/.omo/teams/{name}/config.json`:
 
 ```json
 {
-  "version": 1,
-  "name": "research-team",
-  "description": "explores codebase + drafts a refactor plan",
-  "createdAt": 1714780000000,
-  "leadAgentId": "lead",
+  "name": "ccapi-explorers",
+  "description": "Explore the ccapi project structure.",
+  "lead": { "kind": "subagent_type", "subagent_type": "sisyphus" },
   "members": [
-    { "kind": "subagent_type", "name": "lead", "subagent_type": "atlas" },
-    { "kind": "category", "name": "scout", "category": "deep", "prompt": "Scout the codebase for auth patterns." },
-    { "kind": "category", "name": "drafter", "category": "deep", "prompt": "Draft a refactor plan based on findings." }
+    { "kind": "category", "name": "scout-1", "category": "deep", "prompt": "Scout the src/ dir for auth patterns." },
+    { "kind": "category", "name": "scout-2", "category": "quick", "prompt": "Scout tests for auth coverage." }
   ]
 }
 ```
 
 Project-scoped variant: `<project>/.omo/teams/{name}/config.json` (project beats user on collisions).
+
+`version`, `createdAt`, and `leadAgentId` are optional in config files. The loader fills them automatically. You can either write a top-level `lead: {...}` shorthand, mark one member with `isLead: true`, or omit both when the team has exactly one member.
 
 ## Member kinds
 

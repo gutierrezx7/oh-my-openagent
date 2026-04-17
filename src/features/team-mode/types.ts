@@ -52,15 +52,39 @@ const TeamReferenceSchema = z.object({
   description: z.string().optional(),
 }).strict()
 
+const MISSING_TEAM_LEAD_MESSAGE = "leadAgentId required (or write a `lead: {...}` field, or mark one member with `isLead: true`)"
+
 export const TeamSpecSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(1).default(1),
   name: z.string().min(1).regex(/^[a-z0-9-]+$/),
   description: z.string().optional(),
-  createdAt: z.number().int().positive(),
-  leadAgentId: z.string(),
+  createdAt: z.number().int().positive().default(() => Date.now()),
+  leadAgentId: z.string().optional(),
   teamAllowedPaths: z.array(z.string()).optional(),
   sessionPermission: z.string().optional(),
   members: z.array(MemberSchema).min(1).max(8),
+}).superRefine((teamSpec, ctx) => {
+  if (teamSpec.leadAgentId === undefined && teamSpec.members.length > 1) {
+    ctx.addIssue({
+      code: "custom",
+      message: MISSING_TEAM_LEAD_MESSAGE,
+      path: ["leadAgentId"],
+    })
+  }
+}).transform((teamSpec) => {
+  if (teamSpec.leadAgentId !== undefined) {
+    return teamSpec
+  }
+
+  const firstMember = teamSpec.members[0]
+  if (!firstMember) {
+    throw new Error(MISSING_TEAM_LEAD_MESSAGE)
+  }
+
+  return {
+    ...teamSpec,
+    leadAgentId: firstMember.name,
+  }
 })
 
 export const MessageSchema = z.object({

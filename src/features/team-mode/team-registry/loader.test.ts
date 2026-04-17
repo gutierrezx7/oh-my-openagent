@@ -96,6 +96,114 @@ describe("team-registry loader", () => {
     expect(teamSpec.leadAgentId).toBe("lead")
   })
 
+  test("defaults version when omitted from stored specs", async () => {
+    // given
+    const rootDirectory = await createTemporaryRoot()
+    temporaryDirectories.push(rootDirectory)
+    const fixturePaths = getFixturePaths(rootDirectory, "default-version")
+    const { version: _version, ...teamSpecWithoutVersion } = createBaseSpec("default-version")
+    await writeJsonFile(fixturePaths.userConfigPath, teamSpecWithoutVersion)
+
+    // when
+    const teamSpec = await loadTeamSpec("default-version", createConfig(fixturePaths.userBaseDir), fixturePaths.projectRoot)
+
+    // then
+    expect(teamSpec.version).toBe(1)
+  })
+
+  test("defaults createdAt from Date.now when omitted from stored specs", async () => {
+    // given
+    const originalDateNow = Date.now
+    Date.now = () => 222_333_444
+    const rootDirectory = await createTemporaryRoot()
+    temporaryDirectories.push(rootDirectory)
+    const fixturePaths = getFixturePaths(rootDirectory, "default-created-at")
+    const { createdAt: _createdAt, ...teamSpecWithoutCreatedAt } = createBaseSpec("default-created-at")
+    await writeJsonFile(fixturePaths.userConfigPath, teamSpecWithoutCreatedAt)
+
+    try {
+      // when
+      const teamSpec = await loadTeamSpec("default-created-at", createConfig(fixturePaths.userBaseDir), fixturePaths.projectRoot)
+
+      // then
+      expect(teamSpec.createdAt).toBe(222_333_444)
+    } finally {
+      Date.now = originalDateNow
+    }
+  })
+
+  test("derives leadAgentId and prepends lead shorthand to members", async () => {
+    // given
+    const rootDirectory = await createTemporaryRoot()
+    temporaryDirectories.push(rootDirectory)
+    const fixturePaths = getFixturePaths(rootDirectory, "lead-shorthand")
+    await writeJsonFile(fixturePaths.userConfigPath, {
+      name: "lead-shorthand",
+      description: "team with shorthand lead",
+      lead: { kind: "subagent_type", subagent_type: "sisyphus" },
+      members: [
+        { kind: "category", name: "scout-1", category: "deep", prompt: "Scout the src directory for auth patterns." },
+        { kind: "category", name: "scout-2", category: "quick", prompt: "Scout tests for auth coverage." },
+      ],
+    })
+
+    // when
+    const teamSpec = await loadTeamSpec("lead-shorthand", createConfig(fixturePaths.userBaseDir), fixturePaths.projectRoot)
+
+    // then
+    expect(teamSpec.leadAgentId).toBe("lead")
+    expect(teamSpec.members).toHaveLength(3)
+    expect(teamSpec.members[0]).toMatchObject({ kind: "subagent_type", name: "lead", subagent_type: "sisyphus" })
+  })
+
+  test("derives leadAgentId from the only member when no lead hint exists", async () => {
+    // given
+    const rootDirectory = await createTemporaryRoot()
+    temporaryDirectories.push(rootDirectory)
+    const fixturePaths = getFixturePaths(rootDirectory, "solo")
+    await writeJsonFile(fixturePaths.userConfigPath, {
+      name: "solo",
+      members: [{ kind: "category", name: "solo-lead", category: "deep", prompt: "Implement the assigned work for the solo team." }],
+    })
+
+    // when
+    const teamSpec = await loadTeamSpec("solo", createConfig(fixturePaths.userBaseDir), fixturePaths.projectRoot)
+
+    // then
+    expect(teamSpec.leadAgentId).toBe("solo-lead")
+    expect(teamSpec.members).toHaveLength(1)
+  })
+
+  test("rejects multi-member specs without any lead indicator with a helpful message", async () => {
+    // given
+    const rootDirectory = await createTemporaryRoot()
+    temporaryDirectories.push(rootDirectory)
+    const fixturePaths = getFixturePaths(rootDirectory, "missing-lead")
+    await writeJsonFile(fixturePaths.userConfigPath, {
+      name: "missing-lead",
+      members: [
+        { kind: "category", name: "member-1", category: "deep", prompt: "Implement the assigned work for member one." },
+        { kind: "category", name: "member-2", category: "quick", prompt: "Review the assigned work for member one." },
+      ],
+    })
+
+    // when
+    let thrownError: unknown
+    try {
+      await loadTeamSpec("missing-lead", createConfig(fixturePaths.userBaseDir), fixturePaths.projectRoot)
+    } catch (error) {
+      thrownError = error
+    }
+
+    // then
+    expect(thrownError).toMatchObject({
+      name: TeamSpecValidationError.name,
+      message: "Invalid team spec field 'leadAgentId': leadAgentId required (or write a `lead: {...}` field, or mark one member with `isLead: true`)",
+      code: "INVALID_TEAM_SPEC",
+      field: "leadAgentId",
+    })
+  })
+
   test("rejects oracle subagent members with the exact plan message", async () => {
     // given
     const rootDirectory = await createTemporaryRoot()

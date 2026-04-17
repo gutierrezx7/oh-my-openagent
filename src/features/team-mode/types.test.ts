@@ -5,6 +5,7 @@ import {
   MemberSchema,
   parseMember,
   SubagentMemberSchema,
+  TeamSpecSchema,
 } from "./types"
 
 describe("team-mode types", () => {
@@ -193,6 +194,58 @@ describe("team-mode types", () => {
 
     // then
     expect(result.success).toBe(false)
+  })
+
+  test("team spec defaults version when omitted", () => {
+    // given
+    const teamSpec = { name: "solo-team", members: [{ kind: "category", name: "solo", category: "deep", prompt: "implement the assigned work" }] }
+
+    // when
+    const result = TeamSpecSchema.parse(teamSpec)
+
+    // then
+    expect(result.version).toBe(1)
+    expect(result.leadAgentId).toBe("solo")
+  })
+
+  test("team spec defaults createdAt from Date.now when omitted", () => {
+    // given
+    const originalDateNow = Date.now
+    Date.now = () => 123_456_789
+    const teamSpec = { name: "solo-team", members: [{ kind: "category", name: "solo", category: "deep", prompt: "implement the assigned work" }] }
+
+    try {
+      // when
+      const result = TeamSpecSchema.parse(teamSpec)
+
+      // then
+      expect(result.createdAt).toBe(123_456_789)
+    } finally {
+      Date.now = originalDateNow
+    }
+  })
+
+  test("team spec rejects multi-member configs without a lead hint", () => {
+    // given
+    const teamSpec = {
+      name: "pair-team",
+      members: [
+        { kind: "category", name: "m1", category: "deep", prompt: "implement the assigned work" },
+        { kind: "category", name: "m2", category: "quick", prompt: "review the assigned work" },
+      ],
+    }
+
+    // when
+    const result = TeamSpecSchema.safeParse(teamSpec)
+
+    // then
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(expect.objectContaining({
+        path: ["leadAgentId"],
+        message: "leadAgentId required (or write a `lead: {...}` field, or mark one member with `isLead: true`)",
+      }))
+    }
   })
 
   test("eligibility registry shape", () => {
