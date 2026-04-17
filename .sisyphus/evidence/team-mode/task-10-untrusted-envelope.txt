@@ -1,0 +1,4 @@
+Scenario: C-4.10 untrusted envelope
+Verification: poll.test.ts :: wraps hostile message bodies in a literal peer_message envelope
+Result: PASS
+Observed: injected content preserved the hostile body verbatim inside a literal <peer_message ...>...</peer_message> wrapper.

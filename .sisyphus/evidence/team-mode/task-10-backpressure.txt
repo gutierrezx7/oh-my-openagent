@@ -1,0 +1,4 @@
+Scenario: C-4.3 recipient backpressure
+Verification: send.test.ts :: rejects sends when recipient unread bytes exceed the backpressure limit
+Result: PASS
+Observed: an unread inbox already above recipient_unread_max_bytes caused sendMessage to throw RecipientBackpressureError.

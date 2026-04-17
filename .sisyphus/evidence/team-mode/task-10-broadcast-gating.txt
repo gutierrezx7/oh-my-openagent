@@ -1,0 +1,4 @@
+Scenario: C-4.5 / C-4.6 broadcast gating
+Verification: send.test.ts :: gates broadcasts to leads and fans out to each active member
+Result: PASS
+Observed: non-lead broadcast was rejected with BroadcastNotPermittedError; lead broadcast delivered exactly one unread file to each active member inbox.

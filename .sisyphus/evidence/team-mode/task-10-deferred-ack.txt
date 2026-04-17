@@ -1,0 +1,4 @@
+Scenario: Deferred ack
+Verification: poll.test.ts :: records pending ids without acking or moving files
+Result: PASS
+Observed: pollAndBuildInjection left unread files in inboxes/m1/, appended both messageIds to pendingInjectedMessageIds, and never called ack during polling.

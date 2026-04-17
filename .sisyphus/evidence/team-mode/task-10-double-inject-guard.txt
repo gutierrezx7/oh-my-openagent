@@ -1,0 +1,4 @@
+Scenario: C-4.7 double inject guard
+Verification: poll.test.ts :: prevents duplicate injection in the same turn marker
+Result: PASS
+Observed: first pollAndBuildInjection call injected content; second call in the same turn returned injected=false with reason="already injected this turn".

@@ -1,0 +1,4 @@
+Scenario: C-4.1 concurrent writers
+Verification: send.test.ts :: writes distinct files for concurrent writers targeting the same recipient
+Result: PASS
+Observed: 4 concurrent sendMessage calls produced 4 distinct JSON files with 4 unique messageIds and valid MessageSchema payloads.

@@ -1,0 +1,83 @@
+import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import { transitionRuntimeState, loadRuntimeState } from "../team-state-store/store"
+import type { Message } from "../types"
+import { listUnreadMessages } from "./inbox"
+
+export interface InjectionResult {
+  injected: boolean
+  content?: string
+  messageIds: string[]
+  reason?: string
+}
+
+function escapeAttributeValue(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("'", "&apos;")
+}
+
+function buildEnvelope(message: Message): string {
+  const attributes = [
+    `from="${escapeAttributeValue(message.from)}"`,
+    `timestamp="${escapeAttributeValue(String(message.timestamp))}"`,
+    `messageId="${escapeAttributeValue(message.messageId)}"`,
+    `kind="${escapeAttributeValue(message.kind)}"`,
+    `correlationId="${escapeAttributeValue(message.correlationId ?? "")}"`,
+  ]
+
+  if (message.summary !== undefined) {
+    attributes.push(`summary="${escapeAttributeValue(message.summary)}"`)
+  }
+
+  if (message.references !== undefined) {
+    attributes.push(`references="${escapeAttributeValue(JSON.stringify(message.references))}"`)
+  }
+
+  return `<peer_message ${attributes.join(" ")}>
+${message.body}
+</peer_message>`
+}
+
+export async function pollAndBuildInjection(
+  sessionID: string,
+  memberName: string,
+  teamRunId: string,
+  config: TeamModeConfig,
+  turnMarker: string,
+): Promise<InjectionResult> {
+  const runtimeState = await loadRuntimeState(teamRunId, config)
+  const runtimeMember = runtimeState.members.find((member) => member.name === memberName)
+  if (runtimeMember?.lastInjectedTurnMarker === turnMarker) {
+    return { injected: false, messageIds: [], reason: "already injected this turn" }
+  }
+
+  if (runtimeMember === undefined) {
+    throw new Error(`runtime member not found for session ${sessionID}: ${memberName}`)
+  }
+
+  const unreadMessages = await listUnreadMessages(teamRunId, memberName, config)
+  if (unreadMessages.length === 0) {
+    return { injected: false, messageIds: [], reason: "no unread" }
+  }
+
+  const messageIds = unreadMessages.map((message) => message.messageId)
+  const content = unreadMessages.map(buildEnvelope).join("\n")
+
+  await transitionRuntimeState(teamRunId, (currentRuntimeState) => ({
+    ...currentRuntimeState,
+    members: currentRuntimeState.members.map((member) => (
+      member.name === memberName
+        ? {
+          ...member,
+          lastInjectedTurnMarker: turnMarker,
+          pendingInjectedMessageIds: [...member.pendingInjectedMessageIds, ...messageIds],
+        }
+        : member
+    )),
+  }), config)
+
+  return { injected: true, content, messageIds }
+}
