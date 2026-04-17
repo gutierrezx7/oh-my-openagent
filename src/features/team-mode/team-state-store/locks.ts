@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdir, readFile, rename, rm, writeFile, open } from "node:fs/promises"
+import { open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises"
 
 type LockOptions = {
   staleAfterMs?: number
@@ -7,6 +7,7 @@ type LockOptions = {
 }
 
 const LOCK_RETRY_MS = 50
+const LOCK_WAIT_TIMEOUT_MS = 4_000
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -15,11 +16,11 @@ function delay(ms: number): Promise<void> {
 }
 
 function buildOwnerContent(ownerTag: string): string {
-  return `${ownerTag}\n${process.pid}\n${Date.now()}`
+  return `${ownerTag}\n${process.pid}\n${Date.now()}\n`
 }
 
 function parseOwnerContent(content: string): { ownerPid: number; acquiredAtEpochMs: number } | null {
-  const lines = content.split("\n")
+  const lines = content.split(/\r?\n/).filter((line) => line.length > 0)
   if (lines.length !== 3) return null
 
   const ownerPid = Number.parseInt(lines[1] ?? "", 10)
@@ -40,10 +41,20 @@ function isPidAlive(pid: number): boolean {
 }
 
 async function acquireLock(lockPath: string, ownerTag: string, staleAfterMs: number): Promise<void> {
+  const startedAt = Date.now()
   for (;;) {
+    if (Date.now() - startedAt > LOCK_WAIT_TIMEOUT_MS) {
+      throw new Error(`Timed out acquiring lock: ${lockPath}`)
+    }
+
     try {
-      await mkdir(lockPath)
-      await writeFile(`${lockPath}/owner`, buildOwnerContent(ownerTag))
+      const fileHandle = await open(lockPath, "wx")
+      try {
+        await fileHandle.writeFile(buildOwnerContent(ownerTag))
+        await fileHandle.sync()
+      } finally {
+        await fileHandle.close()
+      }
       return
     } catch (error) {
       const err = error as NodeJS.ErrnoException
@@ -78,7 +89,7 @@ export async function withLock<T>(
 
 export async function detectStaleLock(lockPath: string, staleAfterMs: number): Promise<boolean> {
   try {
-    const content = await readFile(`${lockPath}/owner`, "utf8")
+    const content = await readFile(lockPath, "utf8")
     const parsed = parseOwnerContent(content)
     if (parsed === null) return false
 
@@ -91,7 +102,7 @@ export async function detectStaleLock(lockPath: string, staleAfterMs: number): P
 }
 
 export async function reapStaleLock(lockPath: string): Promise<void> {
-  await rm(lockPath, { recursive: true, force: true })
+  await unlink(lockPath).catch(() => undefined)
 }
 
 export async function atomicWrite(

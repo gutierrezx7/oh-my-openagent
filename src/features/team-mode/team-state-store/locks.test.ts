@@ -1,5 +1,5 @@
 import { afterEach, expect, mock, test } from "bun:test"
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -85,9 +85,8 @@ test("detects and reaps stale lock entries", async () => {
   const { detectStaleLock, reapStaleLock } = await import("./locks")
   const rootDirectory = await createTempDirectory("locks-stale-")
   const lockPath = join(rootDirectory, "lock")
-  await mkdir(lockPath)
-  const staleContent = `fake-owner-name\n999999999\n${Date.now() - 600_000}`
-  await writeFile(join(lockPath, "owner"), staleContent)
+  const staleContent = `fake-owner-name\n999999999\n${Date.now() - 600_000}\n`
+  await writeFile(lockPath, staleContent)
 
   // when
   const staleDetected = await detectStaleLock(lockPath, 300_000)
@@ -95,6 +94,6 @@ test("detects and reaps stale lock entries", async () => {
 
   // then
   expect(staleDetected).toBe(true)
-  expect(readFile(join(lockPath, "owner"), "utf8")).rejects.toThrow()
+  expect(readFile(lockPath, "utf8")).rejects.toThrow()
   await rm(rootDirectory, { recursive: true, force: true })
 })
