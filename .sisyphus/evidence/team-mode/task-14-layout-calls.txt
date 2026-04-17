@@ -1,0 +1,1 @@
+PASS: createTeamLayout emitted tmux calls for new-session, new-window, split-window, select-layout, select-pane, and pane decoration.
