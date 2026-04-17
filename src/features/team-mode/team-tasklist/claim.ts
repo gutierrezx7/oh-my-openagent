@@ -72,7 +72,7 @@ export async function claimTask(
     throw new AlreadyClaimedError()
   }
 
-  return await withLock(claimLockPath, async () => {
+  return withLock(claimLockPath, async () => {
     const refreshedTask = await getTask(teamRunId, taskId, config)
     if (refreshedTask.status !== "pending") {
       throw new AlreadyClaimedError()
