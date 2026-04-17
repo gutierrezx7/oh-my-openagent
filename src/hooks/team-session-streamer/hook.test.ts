@@ -258,4 +258,57 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
     expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "orphan full")
   })
+
+  test("does not lose text when runtime state mapping is not yet available (pre-mapping race)", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-race",
+            sessionID: "member-session",
+            messageID: "message-z",
+            type: "text",
+            text: "early",
+          },
+        },
+      },
+    })
+    expect(writeTeamSessionFifoMock).not.toHaveBeenCalled()
+
+    mappingReady = true
+
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-race",
+            sessionID: "member-session",
+            messageID: "message-z",
+            type: "text",
+            text: "early late",
+          },
+        },
+      },
+    })
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "early late")
+  })
 })

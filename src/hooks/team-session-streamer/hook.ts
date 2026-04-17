@@ -40,7 +40,7 @@ function extractCumulativeText(part: Part): string | undefined {
   return undefined
 }
 
-function extractUpdateSegment(
+function consumeUpdateSegment(
   event: EventMessagePartUpdated,
   partTextByKey: Map<string, string>,
 ): { sessionID: string; text: string } | undefined {
@@ -59,7 +59,7 @@ function extractUpdateSegment(
   return { sessionID: part.sessionID, text: appendedText }
 }
 
-function extractDeltaSegment(
+function consumeDeltaSegment(
   event: MessagePartDeltaEvent,
   partTextByKey: Map<string, string>,
 ): { sessionID: string; text: string } | undefined {
@@ -117,10 +117,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     return undefined
   }
 
-  async function writeSegment(sessionID: string, text: string): Promise<void> {
-    const target = await resolveStreamTarget(sessionID)
-    if (!target) return
-
+  async function writeSegment(target: TeamSessionStreamTarget, sessionID: string, text: string): Promise<void> {
     try {
       await writeTeamSessionFifo(target.fifoPath, text)
     } catch (error) {
@@ -168,17 +165,21 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
       }
 
       if (event.type === "message.part.delta") {
-        const segment = extractDeltaSegment(event, partTextByKey)
+        const target = await resolveStreamTarget(event.properties.sessionID)
+        if (!target) return
+        const segment = consumeDeltaSegment(event, partTextByKey)
         if (!segment) return
-        await writeSegment(segment.sessionID, segment.text)
+        await writeSegment(target, segment.sessionID, segment.text)
         return
       }
 
       if (event.type !== "message.part.updated") return
-      const segment = extractUpdateSegment(event, partTextByKey)
+      const target = await resolveStreamTarget(event.properties.part.sessionID)
+      if (!target) return
+      const segment = consumeUpdateSegment(event, partTextByKey)
       if (!segment) return
 
-      await writeSegment(segment.sessionID, segment.text)
+      await writeSegment(target, segment.sessionID, segment.text)
     },
   }
 }
