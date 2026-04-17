@@ -1,17 +1,27 @@
 import { log } from "../../../shared"
 import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
+import { ensureTeamMemberFifo } from "./ensure-team-member-fifo"
 import { runTmuxCommand } from "./tmux-runner"
 
-type TeamLayoutMember = { name: string; sessionId: string; color?: string }
+type TeamLayoutMember = { name: string; sessionId: string; color?: string; worktreePath?: string }
 
 type TeamLayoutResult = {
   focusWindowId: string
   gridWindowId: string
   panesByMember: Record<string, string>
+  fifoByMember: Record<string, string>
 }
 
 export function canVisualize(): boolean { return process.env.TMUX !== undefined }
+
+function quoteShellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+function getPaneWorkingDirectory(member: TeamLayoutMember): string {
+  return member.worktreePath ?? process.cwd()
+}
 
 async function createWindow(
   tmuxPath: string,
@@ -19,56 +29,91 @@ async function createWindow(
   windowName: string,
   layout: "main-vertical" | "tiled",
   members: Array<TeamLayoutMember>,
+  fifoByMember: Record<string, string>,
 ): Promise<{ windowId: string; panesByMember: Record<string, string> } | null> {
-  const created = await runTmuxCommand(tmuxPath, ["new-window", "-d", "-P", "-F", "#{window_id}", "-t", sessionName, "-n", windowName])
-  if (!created.success || !created.output) return null
-  const panesByMember: Record<string, string> = {}
   const [lead, ...rest] = members
   if (!lead) return null
 
-  panesByMember[lead.name] = created.output
+  const created = await runTmuxCommand(tmuxPath, [
+    "new-window",
+    "-d",
+    "-P",
+    "-F",
+    "#{window_id} #{pane_id}",
+    "-t",
+    sessionName,
+    "-n",
+    windowName,
+    "-c",
+    getPaneWorkingDirectory(lead),
+  ])
+  if (!created.success || !created.output) return null
+  const [windowId, leadPaneId] = created.output.split(" ", 2)
+  if (!windowId || !leadPaneId) return null
+
+  const panesByMember: Record<string, string> = {}
+
+  panesByMember[lead.name] = leadPaneId
   for (const member of rest) {
-    const split = await runTmuxCommand(tmuxPath, ["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", panesByMember[lead.name] ?? created.output, "sh", "-c", "cat >/dev/null"])
+    const split = await runTmuxCommand(tmuxPath, [
+      "split-window",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-t",
+      windowId,
+      "-c",
+      getPaneWorkingDirectory(member),
+    ])
     if (!split.success || !split.output) return null
     panesByMember[member.name] = split.output
   }
 
-  if (!(await runTmuxCommand(tmuxPath, ["select-layout", "-t", `${sessionName}:${created.output}`, layout])).success) return null
+  if (!(await runTmuxCommand(tmuxPath, ["select-layout", "-t", windowId, layout])).success) return null
 
   for (const member of members) {
     const paneId = panesByMember[member.name]
+    const fifoPath = fifoByMember[member.name]
     if (!paneId) return null
-    const label = member.color ? `${member.name} ${member.color}` : member.name
-    if (!(await runTmuxCommand(tmuxPath, ["select-pane", "-t", paneId, "-T", label])).success) return null
+    if (!fifoPath) return null
+    if (!(await runTmuxCommand(tmuxPath, ["select-pane", "-t", paneId, "-T", member.name])).success) return null
     await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-status", "top"])
-    await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-format", `#{pane_title} ${label}`])
-    await runTmuxCommand(tmuxPath, ["pipe-pane", "-I", "-t", paneId, "cat >/dev/null"])
+    await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-format", "#{pane_title}"])
+    await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, `tail -f ${quoteShellArgument(fifoPath)}`, "Enter"])
   }
 
-  return { windowId: created.output, panesByMember }
+  return { windowId, panesByMember }
 }
 
-export async function createTeamLayout(teamRunId: string, members: Array<TeamLayoutMember>, tmuxMgr: TmuxSessionManager): Promise<TeamLayoutResult | null> {
-  void tmuxMgr
+export async function createTeamLayout(teamRunId: string, members: Array<TeamLayoutMember>, _tmuxMgr: TmuxSessionManager): Promise<TeamLayoutResult | null> {
   if (!canVisualize()) { log("tmux visualization unavailable, skipping"); return null }
   try {
     const tmuxPath = await getTmuxPath()
     if (!tmuxPath) { log("tmux visualization unavailable, skipping"); return null }
+    const fifoByMember = Object.fromEntries(await Promise.all(members.map(async (member) => {
+      const fifoPath = await ensureTeamMemberFifo(teamRunId, member.name)
+      return [member.name, fifoPath]
+    })))
     const sessionName = `omo-team-${teamRunId}`
     const created = await runTmuxCommand(tmuxPath, ["new-session", "-d", "-s", sessionName, "-P", "-F", "#{window_id}"])
     if (!created.success || !created.output) return null
-    const focus = await createWindow(tmuxPath, sessionName, "focus", "main-vertical", members)
-    const grid = await createWindow(tmuxPath, sessionName, "grid", "tiled", members)
+    const focus = await createWindow(tmuxPath, sessionName, "focus", "main-vertical", members, fifoByMember)
+    const grid = await createWindow(tmuxPath, sessionName, "grid", "tiled", members, fifoByMember)
     if (!focus || !grid) return null
-    return { focusWindowId: focus.windowId, gridWindowId: grid.windowId, panesByMember: focus.panesByMember }
+    return {
+      focusWindowId: focus.windowId,
+      gridWindowId: grid.windowId,
+      panesByMember: focus.panesByMember,
+      fifoByMember,
+    }
   } catch (error) {
     log("tmux visualization unavailable, skipping", { error: String(error) })
     return null
   }
 }
 
-export async function removeTeamLayout(teamRunId: string, tmuxMgr: TmuxSessionManager): Promise<void> {
-  void tmuxMgr
+export async function removeTeamLayout(teamRunId: string, _tmuxMgr: TmuxSessionManager): Promise<void> {
   if (!canVisualize()) return
   try {
     const tmuxPath = await getTmuxPath()

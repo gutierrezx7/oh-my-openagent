@@ -93,6 +93,10 @@ Add `"worktreePath": "../wt-scout"` to a member entry. Path is filesystem-relati
 
 Set `tmux_visualization: true`. Requires running inside a tmux session and tmux on PATH. Failures are isolated — a missing tmux never blocks team creation.
 
+When enabled, the `focus` window tails a per-member FIFO at `/tmp/omo-team/{teamRunId}/{memberName}.fifo`, so each pane shows that member session's streaming model output. Panes start in each member worktree when configured, otherwise the repo root.
+
+`team_delete` tears down the tmux session and removes the FIFO directory under `/tmp/omo-team/{teamRunId}/`.
+
 ## What team mode does NOT do
 
 - No nested teams (members cannot call `team_create`).

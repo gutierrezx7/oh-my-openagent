@@ -3,8 +3,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { access, mkdir, rm } from "node:fs/promises"
 
+import { getTeamFifoDirectory } from "../team-layout-tmux/fifo-path"
 import { sendMessage } from "../team-mailbox/send"
-import { getInboxDir, getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
+import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import {
   createFixture,
@@ -37,7 +38,13 @@ describe("team-runtime shutdown", () => {
     const result = deleteTeam(fixture.teamRunId, fixture.config)
 
     // then
-    await expect(result).rejects.toThrow("members still active")
+    await result.then(
+      () => { throw new Error("expected deleteTeam to reject") },
+      (error: unknown) => {
+        if (!(error instanceof Error)) throw error
+        expect(error.message).toBe("members still active")
+      },
+    )
     const runtimeState = await loadRuntimeState(fixture.teamRunId, fixture.config)
     expect(runtimeState.status).toBe("active")
     expect(runtimeState.members.filter((member) => member.agentType !== "leader").map((member) => member.status)).toEqual([
@@ -125,6 +132,7 @@ describe("team-runtime shutdown", () => {
     // given
     const fixture = await createFixture()
     temporaryDirectories.push(fixture.baseDir)
+    const fifoDirectory = getTeamFifoDirectory(fixture.teamRunId)
     await updateMemberStatuses(fixture.teamRunId, fixture.config, {
       "member-a": "shutdown_approved",
       "member-b": "shutdown_approved",
@@ -132,6 +140,7 @@ describe("team-runtime shutdown", () => {
     await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
       await mkdir(worktreePath, { recursive: true })
     }))
+    await mkdir(fifoDirectory, { recursive: true })
 
     // when
     const result = await deleteTeam(fixture.teamRunId, fixture.config)
@@ -140,9 +149,20 @@ describe("team-runtime shutdown", () => {
     expect(result.removedLayout).toBe(false)
     expect(result.removedWorktrees.sort()).toEqual([...fixture.worktreePaths].sort())
     await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
-      await expect(access(worktreePath)).rejects.toThrow()
+      await access(worktreePath).then(
+        () => { throw new Error(`expected ${worktreePath} to be removed`) },
+        () => undefined,
+      )
     }))
-    await expect(access(getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId))).rejects.toThrow()
+    await access(fifoDirectory).then(
+      () => { throw new Error(`expected ${fifoDirectory} to be removed`) },
+      () => undefined,
+    )
+    const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
+    await access(runtimeStateDirectory).then(
+      () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
+      () => undefined,
+    )
   })
 
   test("blocks mailbox writes while the team is deleting", async () => {
@@ -167,6 +187,12 @@ describe("team-runtime shutdown", () => {
     )
 
     // then
-    await expect(result).rejects.toThrow("team is deleting")
+    await result.then(
+      () => { throw new Error("expected sendMessage to reject") },
+      (error: unknown) => {
+        if (!(error instanceof Error)) throw error
+        expect(error.message).toBe("team is deleting")
+      },
+    )
   })
 })

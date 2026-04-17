@@ -1,4 +1,4 @@
-import { access, mkdir, rm } from "node:fs/promises"
+import { access, mkdir } from "node:fs/promises"
 import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
@@ -7,10 +7,11 @@ import type { ExecutorContext } from "../../../tools/delegate-task/executor-type
 import type { BackgroundTask } from "../../background-agent/types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
-import { createTeamLayout, removeTeamLayout } from "../team-layout-tmux/layout"
 import { ensureBaseDirs, getInboxDir, getTeamSpecPath, resolveBaseDir } from "../team-registry/paths"
 import { createRuntimeState, listActiveTeams, loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { RuntimeState, TeamSpec } from "../types"
+import { activateTeamLayout } from "./activate-team-layout"
+import { cleanupTeamRunResources } from "./cleanup-team-run-resources"
 import { resolveMember } from "./resolve-member"
 
 const SESSION_ID_POLL_MS = 25
@@ -164,58 +165,17 @@ export async function createTeamRun(
     if (failure) throw failure
 
     const launchedRuntimeState = await loadRuntimeState(runtimeState.teamRunId, config)
-    if (config.tmux_visualization && tmuxMgr) {
-      const layout = await createTeamLayout(
-        runtimeState.teamRunId,
-        launchedRuntimeState.members.flatMap((member) => member.sessionId ? [{ name: member.name, sessionId: member.sessionId, color: member.color }] : []),
-        tmuxMgr,
-      )
-      if (layout) {
-        createdLayout = true
-        await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({
-          ...currentState,
-          members: currentState.members.map((member) => ({ ...member, tmuxPaneId: layout.panesByMember[member.name] ?? member.tmuxPaneId })),
-        }), config)
-      }
-    }
+    createdLayout = await activateTeamLayout(launchedRuntimeState, config, ctx.directory, tmuxMgr)
 
     return await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({ ...currentState, status: "active" }), config)
   } catch (error) {
-    const cleanupReport: TeamRunCreateError["cleanupReport"] = {
-      cancelledTaskIds: [],
-      removedLayout: false,
-      removedWorktrees: [],
-      errors: [],
-    }
-    for (const resource of [...resources].reverse()) {
-      if (resource.taskId) {
-        try {
-          await bgMgr.cancelTask(resource.taskId, { source: "team-create-rollback", reason: "creating_rollback", skipNotification: true })
-          cleanupReport.cancelledTaskIds.push(resource.taskId)
-        } catch (cancelError) {
-          cleanupReport.errors.push(`cancel ${resource.taskId}: ${normalizeError(cancelError).message}`)
-        }
-      }
-      if (resource.worktreePath) {
-        try {
-          await rm(resource.worktreePath, { recursive: true, force: true })
-          cleanupReport.removedWorktrees.push(resource.worktreePath)
-        } catch (cleanupError) {
-          cleanupReport.errors.push(`worktree ${resource.worktreePath}: ${normalizeError(cleanupError).message}`)
-        }
-      }
-    }
-    if (createdLayout && tmuxMgr) {
-      try {
-        await removeTeamLayout(runtimeState.teamRunId, tmuxMgr)
-        cleanupReport.removedLayout = true
-      } catch (layoutError) {
-        cleanupReport.errors.push(`layout ${runtimeState.teamRunId}: ${normalizeError(layoutError).message}`)
-      }
-    }
-    await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({ ...currentState, status: "failed" }), config).catch((transitionError) => {
-      cleanupReport.errors.push(`state ${runtimeState.teamRunId}: ${normalizeError(transitionError).message}`)
-      return runtimeState
+    const cleanupReport = await cleanupTeamRunResources({
+      teamRunId: runtimeState.teamRunId,
+      config,
+      resources,
+      bgMgr,
+      tmuxMgr,
+      createdLayout,
     })
     throw new TeamRunCreateError(`Failed to create team run '${spec.name}'`, cleanupReport, normalizeError(error))
   }
