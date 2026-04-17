@@ -1,0 +1,7 @@
+Scenario: Category member routes to resolveCategoryExecution (C-3.1)
+Command: bun test src/features/team-mode/team-runtime/resolve-member.test.ts
+Result: PASS
+Checks:
+- resolveCategoryExecution called once
+- args included { category: "deep", prompt: "impl X", subagent_type: "sisyphus-junior" }
+- result.agentToUse === "sisyphus-junior"

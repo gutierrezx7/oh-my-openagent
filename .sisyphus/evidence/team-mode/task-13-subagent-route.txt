@@ -1,0 +1,7 @@
+Scenario: Subagent member routes to resolveSubagentExecution (C-3.2)
+Command: bun test src/features/team-mode/team-runtime/resolve-member.test.ts
+Result: PASS
+Checks:
+- resolveSubagentExecution called once
+- args included { subagent_type: "atlas", prompt: "addendum" }
+- result.agentToUse === "atlas"
