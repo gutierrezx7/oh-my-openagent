@@ -46,6 +46,7 @@ export { createSisyphusJuniorNotepadHook } from "./sisyphus-junior-notepad";
 export { createTaskResumeInfoHook } from "./task-resume-info";
 export { createStartWorkHook } from "./start-work";
 export { createAtlasHook } from "./atlas";
+export { createTeamToolGating } from "./team-tool-gating"
 export { createDelegateTaskRetryHook } from "./delegate-task-retry";
 export { createQuestionLabelTruncatorHook } from "./question-label-truncator";
 export { createStopContinuationGuardHook, type StopContinuationGuard } from "./stop-continuation-guard";

@@ -1,0 +1,3 @@
+Target: src/hooks/team-tool-gating/hook.ts
+Test: bun test src/hooks/team-tool-gating/
+Result: pass (fresh session allowed to call team_create)
