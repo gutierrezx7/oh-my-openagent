@@ -184,6 +184,11 @@ export const AGENT_ELIGIBILITY_REGISTRY: Readonly<Record<string, {
   "sisyphus-junior": { verdict: "eligible" },
 } as const
 
+/**
+ * §V.3 member validation error messages live in member-parser.ts.
+ * Includes: "Unknown subagent_type '<name>'. Available ELIGIBLE agents: sisyphus, atlas, sisyphus-junior, hephaestus (if D-36 applied). Use delegate-task for read-only agents like oracle, librarian, explore, metis, momus, multimodal-looker."
+ */
+
 const parseMemberBase = createParseMember(MemberSchema, AGENT_ELIGIBILITY_REGISTRY)
 
 export function parseMember(input: unknown): Member {
