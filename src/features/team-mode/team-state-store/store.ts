@@ -107,6 +107,78 @@ export async function loadRuntimeState(teamRunId: string, config: TeamModeConfig
   const baseDir = resolveBaseDir(config)
   const statePath = `${getRuntimeStateDir(baseDir, teamRunId)}/state.json`
 
-  const content = await readFile(statePath, "utf8")
-  return JSON.parse(content) as RuntimeState
+  try {
+    return validateRuntimeState(JSON.parse(stateContent), teamRunId)
+  } catch (error) {
+    if (error instanceof RuntimeStateError) throw error
+    throw new RuntimeStateError(
+      `runtime state invalid for ${teamRunId}: ${(error as Error).message}`,
+      "invalid_runtime_state",
+    )
+  }
+}
+
+export async function saveRuntimeState(runtimeState: RuntimeState, config: TeamModeConfig): Promise<void> {
+  const baseDir = resolveBaseDir(config)
+  await atomicWrite(getStatePath(baseDir, runtimeState.teamRunId), serializeRuntimeState(runtimeState))
+}
+
+export async function transitionRuntimeState(
+  teamRunId: string,
+  transition: (runtimeState: RuntimeState) => RuntimeState,
+  config: TeamModeConfig,
+): Promise<RuntimeState> {
+  const baseDir = resolveBaseDir(config)
+  const runtimeDirectoryPath = getRuntimeStateDir(baseDir, teamRunId)
+
+  return await withLock(path.join(runtimeDirectoryPath, "state.lock"), async () => {
+    const currentRuntimeState = await loadRuntimeState(teamRunId, config)
+    const nextRuntimeState = validateRuntimeState(transition(currentRuntimeState), teamRunId)
+
+    if (!isValidTransition(currentRuntimeState.status, nextRuntimeState.status)) {
+      throw new InvalidTransitionError(currentRuntimeState.status, nextRuntimeState.status)
+    }
+
+    await saveRuntimeState(nextRuntimeState, config)
+    return nextRuntimeState
+  }, { ownerTag: "team-state-store" })
+}
+
+export async function listActiveTeams(
+  config: TeamModeConfig,
+): Promise<Array<{ teamRunId: string; teamName: string; status: string; memberCount: number; scope: "project" | "user" }>> {
+  const baseDir = resolveBaseDir(config)
+
+  try {
+    const runtimeEntries = await readdir(path.join(baseDir, "runtime"), { withFileTypes: true })
+    const activeTeams: Array<{ teamRunId: string; teamName: string; status: string; memberCount: number; scope: "project" | "user" }> = []
+
+    for (const runtimeEntry of runtimeEntries) {
+      if (!runtimeEntry.isDirectory()) continue
+
+      try {
+        const runtimeState = await loadRuntimeState(runtimeEntry.name, config)
+        activeTeams.push({
+          teamRunId: runtimeState.teamRunId,
+          teamName: runtimeState.teamName,
+          status: runtimeState.status,
+          memberCount: runtimeState.members.length,
+          scope: runtimeState.specSource,
+        })
+      } catch (error) {
+        log("team runtime state skipped", {
+          event: "team-runtime-state-skipped",
+          teamRunId: runtimeEntry.name,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    activeTeams.sort((leftTeam, rightTeam) => leftTeam.teamName.localeCompare(rightTeam.teamName) || leftTeam.teamRunId.localeCompare(rightTeam.teamRunId))
+    return activeTeams
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException
+    if (nodeError.code === "ENOENT") return []
+    throw error
+  }
 }
