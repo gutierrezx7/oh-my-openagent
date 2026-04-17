@@ -1,0 +1,11 @@
+Task 11 evidence: Reverse transition rejected (C-5.5)
+
+- Test file: src/features/team-mode/team-tasklist/update.test.ts
+- Test name: updateTaskStatus rejects reverse transitions
+- Result: PASS
+- Verified: completed -> claimed throws InvalidTaskTransitionError
+- Verified message: no reverse transitions from completed to claimed
+
+Suite snapshot:
+- bun test src/features/team-mode/team-tasklist/
+- 13 pass, 0 fail, 26 expect() calls
