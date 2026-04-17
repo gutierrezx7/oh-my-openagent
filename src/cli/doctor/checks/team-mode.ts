@@ -1,5 +1,5 @@
 import { checkTeamModeDependencies } from "../../../features/team-mode/deps"
-import { ensureBaseDirs, resolveBaseDir } from "../../../features/team-mode/team-registry/paths"
+import { resolveBaseDir } from "../../../features/team-mode/team-registry/paths"
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import { CHECK_IDS, CHECK_NAMES } from "../constants"
 import type { CheckResult } from "../types"
@@ -16,16 +16,17 @@ export async function checkTeamMode(): Promise<CheckResult> {
 
   const deps = await checkTeamModeDependencies(teamModeConfig)
   const baseDir = resolveBaseDir(teamModeConfig)
-  await ensureBaseDirs(baseDir)
-  const [teamCount, runtimeCount] = await Promise.all([
+  const [baseDirExists, teamCount, runtimeCount] = await Promise.all([
+    pathExists(baseDir),
     safeCount(path.join(baseDir, "teams")),
     safeCount(path.join(baseDir, "runtime")),
   ])
+  const baseDirMessage = baseDirExists ? `base dir: ok` : `base dir: missing (plugin init will create it on first use)`
 
   return {
     name: CHECK_NAMES[CHECK_IDS.TEAM_MODE],
     status: deps.tmuxAvailable && deps.gitAvailable ? "pass" : "warn",
-    message: `team_mode: enabled | tmux: ${deps.tmuxAvailable ? "ok" : "missing"} | git: ${deps.gitAvailable ? "ok" : "missing"} | declared: ${teamCount} | runtime dirs: ${runtimeCount}`,
+    message: `team_mode: enabled | tmux: ${deps.tmuxAvailable ? "ok" : "missing"} | git: ${deps.gitAvailable ? "ok" : "missing"} | ${baseDirMessage} | declared: ${teamCount} | runtime dirs: ${runtimeCount}`,
     details: undefined,
     issues: [],
   }
@@ -49,5 +50,14 @@ async function safeCount(dir: string): Promise<number> {
     return entries.filter((entry) => entry.isDirectory()).length
   } catch {
     return 0
+  }
+}
+
+async function pathExists(dir: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(dir)
+    return stats.isDirectory()
+  } catch {
+    return false
   }
 }
