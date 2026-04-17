@@ -282,7 +282,7 @@ export function createEventHandler(args: {
   const teamMemberErrorHandler = teamModeConfig
     ? createTeamMemberErrorHandler(teamModeConfig)
     : undefined;
-  const teamIdleWakeHint = teamModeConfig
+  const teamIdleWakeHint = teamModeConfig && pluginContext.client.session?.promptAsync
     ? createTeamIdleWakeHint({
         directory: pluginContext.directory,
         client: {
