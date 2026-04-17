@@ -28,6 +28,7 @@ export function validateSpec(spec: TeamSpec): void {
   }
 
   const seenMemberNames = new Set<string>()
+  let leadMatchCount = 0
 
   for (const member of spec.members) {
     if (seenMemberNames.has(member.name)) {
@@ -42,10 +43,13 @@ export function validateSpec(spec: TeamSpec): void {
     seenMemberNames.add(member.name)
     validateMemberEligibility(member)
     validateDualSupport(member)
+
+    if (member.name === spec.leadAgentId) {
+      leadMatchCount += 1
+    }
   }
 
-  const leadMatches = spec.members.filter((member) => member.name === spec.leadAgentId)
-  if (leadMatches.length !== 1) {
+  if (leadMatchCount !== 1) {
     throw new TeamSpecValidationError(
       `Team '${spec.name}' leadAgentId '${spec.leadAgentId}' must match exactly one member.name.`,
       "INVALID_LEAD_AGENT_ID",
@@ -82,7 +86,7 @@ export function validateMemberEligibility(member: Member): void {
 export function validateDualSupport(member: Member): void {
   const trimmedPrompt = member.prompt?.trim()
 
-  if (member.prompt !== undefined && trimmedPrompt?.length === 0) {
+  if (trimmedPrompt === "") {
     throw new TeamSpecValidationError(
       `Member '${member.name}' prompt must not be empty after trimming whitespace.`,
       "EMPTY_PROMPT",
