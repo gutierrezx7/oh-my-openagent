@@ -1,0 +1,12 @@
+Task 18 evidence: active lead gone -> orphaned
+
+Command:
+bun test src/features/team-mode/team-state-store/resume.test.ts
+
+Covered by:
+- resume.test.ts :: marks active teams orphaned when lead session no longer exists
+
+Observed:
+- mocked ctx.client.session.get returned 404-style missing session error
+- runtime state transitioned from active to orphaned
+- targeted test passed
