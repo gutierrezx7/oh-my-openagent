@@ -1,5 +1,6 @@
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { BackgroundManager } from "../../background-agent/manager"
+import type { RuntimeState } from "../types"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { sendMessage } from "../team-mailbox/send"
 import { removeTeamLayout, canVisualize } from "../team-layout-tmux/layout"
@@ -14,6 +15,13 @@ import {
   getRuntimeMember,
   removeWorktrees,
 } from "./shutdown-helpers"
+
+const DELETABLE_TEAM_STATUSES = new Set<RuntimeState["status"]>([
+  "active",
+  "shutdown_requested",
+  "deleting",
+  "deleted",
+])
 
 export async function requestShutdownOfMember(
   teamRunId: string,
@@ -124,10 +132,6 @@ export async function rejectShutdown(
   }
 
   const shutdownRequest = runtimeState.shutdownRequests[shutdownRequestIndex]
-  if (!shutdownRequest) {
-    throw new Error(`shutdown request missing for '${memberName}'`)
-  }
-
   if (shutdownRequest.rejectedAt !== undefined && shutdownRequest.rejectedReason === reason) {
     return
   }
@@ -166,7 +170,7 @@ export async function deleteTeam(
     throw new Error("members still active")
   }
 
-  if (!new Set(["active", "shutdown_requested", "deleting", "deleted"]).has(runtimeState.status)) {
+  if (!DELETABLE_TEAM_STATUSES.has(runtimeState.status)) {
     throw new Error(`team cannot be deleted from '${runtimeState.status}'`)
   }
 
@@ -180,12 +184,10 @@ export async function deleteTeam(
 
   if (bgMgr) {
     const teamTasks = bgMgr.getTasksByParentSession(teamRunId)
-    await Promise.all(teamTasks.map(async (task) => {
-      await bgMgr.cancelTask(task.id, {
-        source: "team-mode-delete",
-        reason: `delete team ${teamRunId}`,
-      })
-    }))
+    await Promise.all(teamTasks.map((task) => bgMgr.cancelTask(task.id, {
+      source: "team-mode-delete",
+      reason: `delete team ${teamRunId}`,
+    })))
   }
 
   const removedLayout = tmuxMgr !== undefined && canVisualize()
