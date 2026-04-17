@@ -5,7 +5,7 @@ import { getTeamMemberFifoPath } from "../../features/team-mode/team-layout-tmux
 import * as teamStateStore from "../../features/team-mode/team-state-store"
 import { log } from "../../shared/logger"
 import { writeTeamSessionFifo } from "./fifo-writer"
-import { createPendingDeltaBuffer, type PendingDelta } from "./pending-delta-buffer"
+import { createPendingDeltaBuffer, type PendingStreamEvent } from "./pending-delta-buffer"
 
 type TeamStateStore = Pick<typeof teamStateStore, "listActiveTeams" | "loadRuntimeState">
 
@@ -28,9 +28,10 @@ type TeamSessionStreamTarget = {
 }
 
 type HookInput = { event: StreamEvent }
-type HookImpl = { event: (input: HookInput) => Promise<void> }
+type HookImpl = { event: (input: HookInput) => Promise<void>; dispose: () => void }
 
 const DROPPABLE_FIFO_ERROR_CODES = new Set(["ENXIO", "ENOENT", "EPIPE"])
+const PENDING_RESOLVE_RETRY_MS = 250
 
 function isErrorWithCode(error: unknown): error is Error & { code: string } {
   return error instanceof Error && "code" in error && typeof error.code === "string"
@@ -41,23 +42,36 @@ function extractCumulativeText(part: Part): string | undefined {
   return undefined
 }
 
-function consumeUpdateSegment(
-  event: EventMessagePartUpdated,
-  partTextByKey: Map<string, string>,
-): { sessionID: string; text: string } | undefined {
-  const part = event.properties.part
-  const cumulativeText = extractCumulativeText(part)
+function normalizeUpdateEventForBuffer(event: EventMessagePartUpdated): PendingStreamEvent | undefined {
+  const cumulativeText = extractCumulativeText(event.properties.part)
   if (cumulativeText === undefined) return undefined
+  return { kind: "update", partID: event.properties.part.id, cumulativeText }
+}
 
-  const partKey = `${part.sessionID}:${part.id}`
+function normalizeDeltaEventForBuffer(event: MessagePartDeltaEvent): PendingStreamEvent | undefined {
+  const { partID, field, delta } = event.properties
+  if (typeof delta !== "string" || delta.length === 0) return undefined
+  if (field !== undefined && field !== "text" && field !== "content") return undefined
+  if (!partID) return undefined
+  return { kind: "delta", partID, delta }
+}
+
+function applyPendingEvent(
+  pending: PendingStreamEvent,
+  sessionID: string,
+  partTextByKey: Map<string, string>,
+): string | undefined {
+  const partKey = `${sessionID}:${pending.partID}`
   const previousText = partTextByKey.get(partKey) ?? ""
-  partTextByKey.set(partKey, cumulativeText)
-
-  const appendedText = cumulativeText.startsWith(previousText)
-    ? cumulativeText.slice(previousText.length)
-    : cumulativeText
-  if (appendedText.length === 0) return undefined
-  return { sessionID: part.sessionID, text: appendedText }
+  if (pending.kind === "delta") {
+    partTextByKey.set(partKey, previousText + pending.delta)
+    return pending.delta
+  }
+  partTextByKey.set(partKey, pending.cumulativeText)
+  const appendedText = pending.cumulativeText.startsWith(previousText)
+    ? pending.cumulativeText.slice(previousText.length)
+    : pending.cumulativeText
+  return appendedText.length === 0 ? undefined : appendedText
 }
 
 function clearSessionPartState(sessionID: string, partTextByKey: Map<string, string>): void {
@@ -72,6 +86,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   const streamTargetsBySession = new Map<string, TeamSessionStreamTarget>()
   const partTextByKey = new Map<string, string>()
   const pendingDeltaBuffer = createPendingDeltaBuffer()
+  let pendingRetryTimer: ReturnType<typeof setTimeout> | undefined
 
   async function resolveStreamTarget(sessionID: string): Promise<TeamSessionStreamTarget | undefined> {
     const cachedTarget = streamTargetsBySession.get(sessionID)
@@ -126,21 +141,35 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     }
   }
 
-  async function flushPendingDeltas(target: TeamSessionStreamTarget, sessionID: string): Promise<void> {
+  async function flushPending(target: TeamSessionStreamTarget, sessionID: string): Promise<void> {
     const drained = pendingDeltaBuffer.drain(sessionID)
     for (const pending of drained) {
-      const partKey = `${sessionID}:${pending.partID}`
-      partTextByKey.set(partKey, (partTextByKey.get(partKey) ?? "") + pending.delta)
-      await writeSegment(target, sessionID, pending.delta)
+      const appendedText = applyPendingEvent(pending, sessionID, partTextByKey)
+      if (appendedText) await writeSegment(target, sessionID, appendedText)
     }
   }
 
-  function normalizeDeltaEventForBuffer(event: MessagePartDeltaEvent): PendingDelta | undefined {
-    const { partID, field, delta } = event.properties
-    if (typeof delta !== "string" || delta.length === 0) return undefined
-    if (field !== undefined && field !== "text" && field !== "content") return undefined
-    if (!partID) return undefined
-    return { partID, delta }
+  async function retryPendingResolutions(): Promise<void> {
+    pendingRetryTimer = undefined
+    const sessions = pendingDeltaBuffer.getPendingSessions()
+    for (const pendingSessionID of sessions) {
+      const target = await resolveStreamTarget(pendingSessionID)
+      if (target) await flushPending(target, pendingSessionID)
+    }
+    if (pendingDeltaBuffer.getPendingSessions().length > 0) schedulePendingRetry()
+  }
+
+  function schedulePendingRetry(): void {
+    if (pendingRetryTimer) return
+    pendingRetryTimer = setTimeout(() => {
+      void retryPendingResolutions()
+    }, PENDING_RESOLVE_RETRY_MS)
+  }
+
+  function stopPendingRetry(): void {
+    if (!pendingRetryTimer) return
+    clearTimeout(pendingRetryTimer)
+    pendingRetryTimer = undefined
   }
 
   return {
@@ -152,6 +181,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         streamTargetsBySession.delete(sessionID)
         pendingDeltaBuffer.clearSession(sessionID)
         clearSessionPartState(sessionID, partTextByKey)
+        if (pendingDeltaBuffer.getPendingSessions().length === 0) stopPendingRetry()
         return
       }
 
@@ -159,6 +189,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         const { sessionID, partID } = event.properties
         pendingDeltaBuffer.removePart(sessionID, partID)
         partTextByKey.delete(`${sessionID}:${partID}`)
+        if (pendingDeltaBuffer.getPendingSessions().length === 0) stopPendingRetry()
         return
       }
 
@@ -169,6 +200,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
           pendingDeltaBuffer.clearSession(sessionID)
           clearSessionPartState(sessionID, partTextByKey)
         }
+        if (pendingDeltaBuffer.getPendingSessions().length === 0) stopPendingRetry()
         return
       }
 
@@ -179,24 +211,31 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         const target = await resolveStreamTarget(sessionID)
         if (!target) {
           pendingDeltaBuffer.enqueue(sessionID, pending)
+          schedulePendingRetry()
           return
         }
-        await flushPendingDeltas(target, sessionID)
-        const partKey = `${sessionID}:${pending.partID}`
-        partTextByKey.set(partKey, (partTextByKey.get(partKey) ?? "") + pending.delta)
-        await writeSegment(target, sessionID, pending.delta)
+        await flushPending(target, sessionID)
+        const appendedText = applyPendingEvent(pending, sessionID, partTextByKey)
+        if (appendedText) await writeSegment(target, sessionID, appendedText)
         return
       }
 
       if (event.type !== "message.part.updated") return
+      const pending = normalizeUpdateEventForBuffer(event)
+      if (!pending) return
       const sessionID = event.properties.part.sessionID
       const target = await resolveStreamTarget(sessionID)
-      if (!target) return
-      await flushPendingDeltas(target, sessionID)
-      const segment = consumeUpdateSegment(event, partTextByKey)
-      if (!segment) return
-
-      await writeSegment(target, segment.sessionID, segment.text)
+      if (!target) {
+        pendingDeltaBuffer.enqueue(sessionID, pending)
+        schedulePendingRetry()
+        return
+      }
+      await flushPending(target, sessionID)
+      const appendedText = applyPendingEvent(pending, sessionID, partTextByKey)
+      if (appendedText) await writeSegment(target, sessionID, appendedText)
+    },
+    dispose: () => {
+      stopPendingRetry()
     },
   }
 }

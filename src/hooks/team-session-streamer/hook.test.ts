@@ -306,10 +306,85 @@ describe("createTeamSessionStreamer", () => {
         },
       },
     })
+    streamer.dispose()
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(2)
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "early")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, " late")
+  })
+
+  test("polling flushes a single message.part.updated that lands before mapping even if no later event arrives", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-solo",
+            sessionID: "member-session",
+            messageID: "message-solo",
+            type: "text",
+            text: "solo-cumulative",
+          },
+        },
+      },
+    })
+    expect(writeTeamSessionFifoMock).not.toHaveBeenCalled()
+    mappingReady = true
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+    streamer.dispose()
 
     // then
     expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
-    expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "early late")
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "solo-cumulative")
+  })
+
+  test("polling flushes a single message.part.delta that lands before mapping even if no later event arrives", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-solo-delta", field: "text", delta: "solo-delta-only" },
+      },
+    })
+    expect(writeTeamSessionFifoMock).not.toHaveBeenCalled()
+    mappingReady = true
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+    streamer.dispose()
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "solo-delta-only")
   })
 
   test("buffers message.part.delta events that arrive before the runtime mapping and replays them in order", async () => {
