@@ -1,0 +1,4 @@
+Scenario: Wake hint fires on idle with unread mail
+Result: PASS
+Evidence: bun test src/hooks/team-session-events/team-idle-wake-hint.test.ts
+Assertion: session.promptAsync fires once with unread-count hint only, without mailbox content.

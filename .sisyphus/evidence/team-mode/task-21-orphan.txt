@@ -1,0 +1,4 @@
+Scenario: Lead session.deleted -> team orphaned
+Result: PASS
+Evidence: bun test src/hooks/team-session-events/team-lead-orphan-handler.test.ts
+Assertion: runtime.status transitions from active to orphaned when deleted session matches leadSessionId.

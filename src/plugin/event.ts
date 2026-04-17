@@ -35,6 +35,9 @@ import { clearSessionPromptParams } from "../shared/session-prompt-params-state"
 import { deleteSessionTools } from "../shared/session-tools-store";
 import { lspManager } from "../tools";
 import { dispatchOpenClawEvent } from "../openclaw/runtime-dispatch";
+import { createTeamIdleWakeHint } from "../hooks/team-session-events/team-idle-wake-hint";
+import { createTeamLeadOrphanHandler } from "../hooks/team-session-events/team-lead-orphan-handler";
+import { createTeamMemberErrorHandler } from "../hooks/team-session-events/team-member-error-handler";
 
 import type { CreatedHooks } from "../create-hooks";
 import type { Managers } from "../create-managers";
@@ -272,6 +275,23 @@ export function createEventHandler(args: {
   const recentSyntheticIdles = new Map<string, number>();
   const recentRealIdles = new Map<string, number>();
   const DEDUP_WINDOW_MS = 500;
+  const teamModeConfig = pluginConfig.team_mode?.enabled ? pluginConfig.team_mode : undefined;
+  const teamLeadOrphanHandler = teamModeConfig
+    ? createTeamLeadOrphanHandler(teamModeConfig)
+    : undefined;
+  const teamMemberErrorHandler = teamModeConfig
+    ? createTeamMemberErrorHandler(teamModeConfig)
+    : undefined;
+  const teamIdleWakeHint = teamModeConfig
+    ? createTeamIdleWakeHint({
+        directory: pluginContext.directory,
+        client: {
+          session: {
+            promptAsync: pluginContext.client.session.promptAsync,
+          },
+        },
+      }, teamModeConfig)
+    : undefined;
   const TMUX_ACTIVITY_EVENT_TYPES = new Set([
     "message.updated",
     "message.part.updated",
@@ -447,6 +467,8 @@ export function createEventHandler(args: {
           });
         }
       }
+
+      await runEventHookSafely("teamLeadOrphanHandler", teamLeadOrphanHandler, input);
     }
 
     if (event.type === "message.removed") {
@@ -468,6 +490,10 @@ export function createEventHandler(args: {
           },
         });
       }
+    }
+
+    if (event.type === "session.idle") {
+      await runEventHookSafely("teamIdleWakeHint", teamIdleWakeHint, input);
     }
 
     if (event.type === "message.updated") {
@@ -696,6 +722,8 @@ export function createEventHandler(args: {
         const sessionID = props?.sessionID as string | undefined;
         log("[event] model-fallback error in session.error:", { sessionID, error: err });
       }
+
+      await runEventHookSafely("teamMemberErrorHandler", teamMemberErrorHandler, input);
     }
   };
 }

@@ -1,0 +1,4 @@
+Scenario: At-least-once preservation across session crash
+Result: DOCUMENTED
+Evidence: plan + implementation note
+Note: Crash-recovery scenario was not simulated end-to-end here. Preservation mechanism remains durable because ack happens only on session.idle; inbox files stay unread until ack-on-idle clears pending state.
