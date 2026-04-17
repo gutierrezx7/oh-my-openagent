@@ -1,23 +1,15 @@
-import type { Event, EventMessagePartUpdated, Part } from "@opencode-ai/sdk"
+import type { Event } from "@opencode-ai/sdk"
 
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { getTeamMemberFifoPath } from "../../features/team-mode/team-layout-tmux/fifo-path"
 import * as teamStateStore from "../../features/team-mode/team-state-store"
 import { log } from "../../shared/logger"
+import { clearSessionPartState, previewPendingEvent } from "./apply-pending-event"
+import { type MessagePartDeltaEvent, normalizeDeltaEventForBuffer, normalizeUpdateEventForBuffer } from "./event-normalizer"
 import { writeTeamSessionFifo } from "./fifo-writer"
 import { createPendingDeltaBuffer, type PendingStreamEvent } from "./pending-delta-buffer"
 
 type TeamStateStore = Pick<typeof teamStateStore, "listActiveTeams" | "loadRuntimeState">
-
-type MessagePartDeltaEvent = {
-  type: "message.part.delta"
-  properties: {
-    sessionID: string
-    partID?: string
-    field?: string
-    delta: string
-  }
-}
 
 type StreamEvent = Event | MessagePartDeltaEvent
 
@@ -35,51 +27,6 @@ const PENDING_RESOLVE_RETRY_MS = 250
 
 function isErrorWithCode(error: unknown): error is Error & { code: string } {
   return error instanceof Error && "code" in error && typeof error.code === "string"
-}
-
-function extractCumulativeText(part: Part): string | undefined {
-  if ("text" in part && typeof part.text === "string") return part.text
-  return undefined
-}
-
-function normalizeUpdateEventForBuffer(event: EventMessagePartUpdated): PendingStreamEvent | undefined {
-  const cumulativeText = extractCumulativeText(event.properties.part)
-  if (cumulativeText === undefined) return undefined
-  return { kind: "update", partID: event.properties.part.id, cumulativeText }
-}
-
-function normalizeDeltaEventForBuffer(event: MessagePartDeltaEvent): PendingStreamEvent | undefined {
-  const { partID, field, delta } = event.properties
-  if (typeof delta !== "string" || delta.length === 0) return undefined
-  if (field !== undefined && field !== "text" && field !== "content") return undefined
-  if (!partID) return undefined
-  return { kind: "delta", partID, delta }
-}
-
-function applyPendingEvent(
-  pending: PendingStreamEvent,
-  sessionID: string,
-  partTextByKey: Map<string, string>,
-): string | undefined {
-  const partKey = `${sessionID}:${pending.partID}`
-  const previousText = partTextByKey.get(partKey) ?? ""
-  if (pending.kind === "delta") {
-    partTextByKey.set(partKey, previousText + pending.delta)
-    return pending.delta
-  }
-  partTextByKey.set(partKey, pending.cumulativeText)
-  const appendedText = pending.cumulativeText.startsWith(previousText)
-    ? pending.cumulativeText.slice(previousText.length)
-    : pending.cumulativeText
-  return appendedText.length === 0 ? undefined : appendedText
-}
-
-function clearSessionPartState(sessionID: string, partTextByKey: Map<string, string>): void {
-  for (const partKey of partTextByKey.keys()) {
-    if (partKey.startsWith(`${sessionID}:`)) {
-      partTextByKey.delete(partKey)
-    }
-  }
 }
 
 export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: TeamStateStore): HookImpl {
@@ -119,15 +66,16 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     return undefined
   }
 
-  async function writeSegment(target: TeamSessionStreamTarget, sessionID: string, text: string): Promise<void> {
+  async function writeSegment(target: TeamSessionStreamTarget, sessionID: string, text: string): Promise<boolean> {
     try {
       await writeTeamSessionFifo(target.fifoPath, text)
+      return true
     } catch (error) {
       if (isErrorWithCode(error) && DROPPABLE_FIFO_ERROR_CODES.has(error.code)) {
         if (error.code === "ENOENT") {
           streamTargetsBySession.delete(sessionID)
         }
-        return
+        return false
       }
 
       log("team session streamer write failed", {
@@ -138,14 +86,28 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         fifoPath: target.fifoPath,
         error: error instanceof Error ? error.message : String(error),
       })
+      return false
     }
+  }
+
+  async function writePendingEvent(
+    target: TeamSessionStreamTarget,
+    sessionID: string,
+    pending: PendingStreamEvent,
+  ): Promise<boolean> {
+    const preview = previewPendingEvent(pending, sessionID, partTextByKey)
+    if (!preview) return true
+    const written = await writeSegment(target, sessionID, preview.appendedText)
+    if (written) partTextByKey.set(preview.partKey, preview.nextState)
+    else pendingDeltaBuffer.enqueue(sessionID, pending)
+    return written
   }
 
   async function flushPending(target: TeamSessionStreamTarget, sessionID: string): Promise<void> {
     const drained = pendingDeltaBuffer.drain(sessionID)
     for (const pending of drained) {
-      const appendedText = applyPendingEvent(pending, sessionID, partTextByKey)
-      if (appendedText) await writeSegment(target, sessionID, appendedText)
+      const written = await writePendingEvent(target, sessionID, pending)
+      if (!written) break
     }
   }
 
@@ -215,8 +177,8 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
           return
         }
         await flushPending(target, sessionID)
-        const appendedText = applyPendingEvent(pending, sessionID, partTextByKey)
-        if (appendedText) await writeSegment(target, sessionID, appendedText)
+        const written = await writePendingEvent(target, sessionID, pending)
+        if (!written) schedulePendingRetry()
         return
       }
 
@@ -231,8 +193,8 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         return
       }
       await flushPending(target, sessionID)
-      const appendedText = applyPendingEvent(pending, sessionID, partTextByKey)
-      if (appendedText) await writeSegment(target, sessionID, appendedText)
+      const written = await writePendingEvent(target, sessionID, pending)
+      if (!written) schedulePendingRetry()
     },
     dispose: () => {
       stopPendingRetry()

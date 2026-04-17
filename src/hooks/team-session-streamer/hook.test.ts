@@ -387,6 +387,65 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "solo-delta-only")
   })
 
+  test("does not advance dedupe state when write fails so later cumulative update replays the full text", async () => {
+    // given
+    const listActiveTeams = mock(async () => [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let failFirstWrite = true
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      if (failFirstWrite) {
+        failFirstWrite = false
+        throw new Error("simulated transient write failure")
+      }
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-retry",
+            sessionID: "member-session",
+            messageID: "message-retry",
+            type: "text",
+            text: "abc",
+          },
+        },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-retry",
+            sessionID: "member-session",
+            messageID: "message-retry",
+            type: "text",
+            text: "abcdef",
+          },
+        },
+      },
+    })
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(3)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "abc")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "abc")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, fifoPath, "def")
+  })
+
   test("buffers message.part.delta events that arrive before the runtime mapping and replays them in order", async () => {
     // given
     let mappingReady = false
