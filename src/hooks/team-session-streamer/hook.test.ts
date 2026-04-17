@@ -311,4 +311,90 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
     expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "early late")
   })
+
+  test("buffers message.part.delta events that arrive before the runtime mapping and replays them in order", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-race-delta", field: "text", delta: "early-" },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-race-delta", field: "text", delta: "mid-" },
+      },
+    })
+    expect(writeTeamSessionFifoMock).not.toHaveBeenCalled()
+
+    mappingReady = true
+
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-race-delta", field: "text", delta: "late" },
+      },
+    })
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(3)
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "early-")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "mid-")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, fifoPath, "late")
+  })
+
+  test("clears buffered deltas on session.deleted so stale replay cannot land on a recycled sessionID", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-x", field: "text", delta: "stale" },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "member-session" } as never },
+      },
+    })
+    mappingReady = true
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-y", field: "text", delta: "fresh" },
+      },
+    })
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "fresh")
+  })
 })

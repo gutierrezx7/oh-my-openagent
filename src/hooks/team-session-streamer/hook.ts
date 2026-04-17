@@ -5,6 +5,7 @@ import { getTeamMemberFifoPath } from "../../features/team-mode/team-layout-tmux
 import * as teamStateStore from "../../features/team-mode/team-state-store"
 import { log } from "../../shared/logger"
 import { writeTeamSessionFifo } from "./fifo-writer"
+import { createPendingDeltaBuffer, type PendingDelta } from "./pending-delta-buffer"
 
 type TeamStateStore = Pick<typeof teamStateStore, "listActiveTeams" | "loadRuntimeState">
 
@@ -59,21 +60,6 @@ function consumeUpdateSegment(
   return { sessionID: part.sessionID, text: appendedText }
 }
 
-function consumeDeltaSegment(
-  event: MessagePartDeltaEvent,
-  partTextByKey: Map<string, string>,
-): { sessionID: string; text: string } | undefined {
-  const { sessionID, partID, field, delta } = event.properties
-  if (typeof delta !== "string" || delta.length === 0) return undefined
-  if (field !== undefined && field !== "text" && field !== "content") return undefined
-  if (!partID) return undefined
-
-  const partKey = `${sessionID}:${partID}`
-  const previousText = partTextByKey.get(partKey) ?? ""
-  partTextByKey.set(partKey, previousText + delta)
-  return { sessionID, text: delta }
-}
-
 function clearSessionPartState(sessionID: string, partTextByKey: Map<string, string>): void {
   for (const partKey of partTextByKey.keys()) {
     if (partKey.startsWith(`${sessionID}:`)) {
@@ -85,6 +71,7 @@ function clearSessionPartState(sessionID: string, partTextByKey: Map<string, str
 export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: TeamStateStore): HookImpl {
   const streamTargetsBySession = new Map<string, TeamSessionStreamTarget>()
   const partTextByKey = new Map<string, string>()
+  const pendingDeltaBuffer = createPendingDeltaBuffer()
 
   async function resolveStreamTarget(sessionID: string): Promise<TeamSessionStreamTarget | undefined> {
     const cachedTarget = streamTargetsBySession.get(sessionID)
@@ -139,6 +126,23 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     }
   }
 
+  async function flushPendingDeltas(target: TeamSessionStreamTarget, sessionID: string): Promise<void> {
+    const drained = pendingDeltaBuffer.drain(sessionID)
+    for (const pending of drained) {
+      const partKey = `${sessionID}:${pending.partID}`
+      partTextByKey.set(partKey, (partTextByKey.get(partKey) ?? "") + pending.delta)
+      await writeSegment(target, sessionID, pending.delta)
+    }
+  }
+
+  function normalizeDeltaEventForBuffer(event: MessagePartDeltaEvent): PendingDelta | undefined {
+    const { partID, field, delta } = event.properties
+    if (typeof delta !== "string" || delta.length === 0) return undefined
+    if (field !== undefined && field !== "text" && field !== "content") return undefined
+    if (!partID) return undefined
+    return { partID, delta }
+  }
+
   return {
     event: async ({ event }: HookInput): Promise<void> => {
       if (!config.enabled || !config.tmux_visualization) return
@@ -146,12 +150,15 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
       if (event.type === "session.deleted") {
         const sessionID = event.properties.info.id
         streamTargetsBySession.delete(sessionID)
+        pendingDeltaBuffer.clearSession(sessionID)
         clearSessionPartState(sessionID, partTextByKey)
         return
       }
 
       if (event.type === "message.part.removed") {
-        partTextByKey.delete(`${event.properties.sessionID}:${event.properties.partID}`)
+        const { sessionID, partID } = event.properties
+        pendingDeltaBuffer.removePart(sessionID, partID)
+        partTextByKey.delete(`${sessionID}:${partID}`)
         return
       }
 
@@ -159,23 +166,33 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         const sessionID = event.properties.sessionID
         if (sessionID) {
           streamTargetsBySession.delete(sessionID)
+          pendingDeltaBuffer.clearSession(sessionID)
           clearSessionPartState(sessionID, partTextByKey)
         }
         return
       }
 
       if (event.type === "message.part.delta") {
-        const target = await resolveStreamTarget(event.properties.sessionID)
-        if (!target) return
-        const segment = consumeDeltaSegment(event, partTextByKey)
-        if (!segment) return
-        await writeSegment(target, segment.sessionID, segment.text)
+        const pending = normalizeDeltaEventForBuffer(event)
+        if (!pending) return
+        const sessionID = event.properties.sessionID
+        const target = await resolveStreamTarget(sessionID)
+        if (!target) {
+          pendingDeltaBuffer.enqueue(sessionID, pending)
+          return
+        }
+        await flushPendingDeltas(target, sessionID)
+        const partKey = `${sessionID}:${pending.partID}`
+        partTextByKey.set(partKey, (partTextByKey.get(partKey) ?? "") + pending.delta)
+        await writeSegment(target, sessionID, pending.delta)
         return
       }
 
       if (event.type !== "message.part.updated") return
-      const target = await resolveStreamTarget(event.properties.part.sessionID)
+      const sessionID = event.properties.part.sessionID
+      const target = await resolveStreamTarget(sessionID)
       if (!target) return
+      await flushPendingDeltas(target, sessionID)
       const segment = consumeUpdateSegment(event, partTextByKey)
       if (!segment) return
 
