@@ -17,6 +17,10 @@ export function createMessagesTransformHandler(args: {
       "experimental.chat.messages.transform"
     ]?.(input, output)
 
+    await args.hooks.teamMailboxInjector?.[
+      "experimental.chat.messages.transform"
+    ]?.(input, output)
+
     await args.hooks.thinkingBlockValidator?.[
       "experimental.chat.messages.transform"
     ]?.(input, output)

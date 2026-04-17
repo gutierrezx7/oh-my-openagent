@@ -1,0 +1,4 @@
+Scenario: C-4.10 envelope injection for member session
+Verification: hook.test.ts :: prepends an envelope as a user-role message for a member session
+Result: PASS
+Observed: the hook prepended the exact <peer_message ...>...</peer_message> payload as a user-role text message and never escalated it to system role.
