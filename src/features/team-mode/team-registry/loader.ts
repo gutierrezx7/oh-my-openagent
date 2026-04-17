@@ -17,23 +17,27 @@ function isJsonRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
 function createSpecialCaseValidationError(rawSpec: unknown): TeamSpecValidationError | undefined {
   if (!isJsonRecord(rawSpec)) {
     return undefined
   }
 
   const rawMembers = rawSpec.members
-  if (Array.isArray(rawMembers) && rawMembers.length > 8) {
+  if (!Array.isArray(rawMembers)) {
+    return undefined
+  }
+
+  if (rawMembers.length > 8) {
     const teamName = typeof rawSpec.name === "string" ? rawSpec.name : "<unknown>"
     return new TeamSpecValidationError(
       `Team '${teamName}' exceeds max 8 members.`,
       "TEAM_MEMBER_LIMIT_EXCEEDED",
       "members",
     )
-  }
-
-  if (!Array.isArray(rawMembers)) {
-    return undefined
   }
 
   for (const rawMember of rawMembers) {
@@ -98,16 +102,22 @@ async function loadTeamSpecFromEntry(entry: DiscoveredTeamSpec): Promise<TeamSpe
   try {
     rawText = await readFile(entry.path, "utf8")
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    throw new TeamSpecValidationError(`Failed to read team spec '${entry.name}': ${reason}`, "TEAM_SPEC_READ_FAILED")
+    const normalizedError = normalizeError(error)
+    throw new TeamSpecValidationError(
+      `Failed to read team spec '${entry.name}': ${normalizedError.message}`,
+      "TEAM_SPEC_READ_FAILED",
+    )
   }
 
   let rawSpec: unknown
   try {
-    rawSpec = JSON.parse(rawText) as unknown
+    rawSpec = JSON.parse(rawText)
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    throw new TeamSpecValidationError(`Failed to parse team spec '${entry.name}' JSON: ${reason}`, "INVALID_JSON")
+    const normalizedError = normalizeError(error)
+    throw new TeamSpecValidationError(
+      `Failed to parse team spec '${entry.name}' JSON: ${normalizedError.message}`,
+      "INVALID_JSON",
+    )
   }
 
   const parsedSpec = TeamSpecSchema.safeParse(rawSpec)
@@ -140,7 +150,7 @@ export async function loadTeamSpec(
     )
   }
 
-  return await loadTeamSpecFromEntry(matchedTeamSpec)
+  return loadTeamSpecFromEntry(matchedTeamSpec)
 }
 
 export async function loadAllTeamSpecs(
@@ -149,12 +159,12 @@ export async function loadAllTeamSpecs(
 ): Promise<Array<{ name: string; scope: "project" | "user"; spec?: TeamSpec; error?: Error }>> {
   const discoveredTeamSpecs = await discoverTeamSpecs(config, projectRoot)
 
-  return await Promise.all(discoveredTeamSpecs.map(async (entry) => {
+  return Promise.all(discoveredTeamSpecs.map(async (entry) => {
     try {
       const spec = await loadTeamSpecFromEntry(entry)
       return { name: entry.name, scope: entry.scope, spec }
     } catch (error) {
-      const normalizedError = error instanceof Error ? error : new Error(String(error))
+      const normalizedError = normalizeError(error)
       log("team-spec load failed", {
         event: "team-spec-load-failed",
         teamName: entry.name,
