@@ -64,8 +64,8 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
       const { checkTeamModeDependencies } = await import("./features/team-mode/deps")
       const { resumeAllTeams } = await import("./features/team-mode/team-state-store/resume")
       const resumeContext: ExecutorContext = {
-        client: ctx.client,
-        directory: ctx.directory,
+        client: input.client,
+        directory: input.directory,
         manager: {} as ExecutorContext["manager"],
       }
       await checkTeamModeDependencies(pluginConfig.team_mode)
