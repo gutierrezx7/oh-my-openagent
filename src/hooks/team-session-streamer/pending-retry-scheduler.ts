@@ -13,12 +13,15 @@ export type PendingRetrySchedulerOptions = {
 
 export function createPendingRetryScheduler(options: PendingRetrySchedulerOptions): PendingRetryScheduler {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false
 
   async function run(): Promise<void> {
     timer = undefined
+    if (stopped) return
     try {
       const sessions = options.getPendingSessions()
       for (const sessionID of sessions) {
+        if (stopped) return
         try {
           await options.drainSession(sessionID)
         } catch (error) {
@@ -30,18 +33,19 @@ export function createPendingRetryScheduler(options: PendingRetrySchedulerOption
         }
       }
     } finally {
-      if (options.getPendingSessions().length > 0) schedule()
+      if (!stopped && options.getPendingSessions().length > 0) schedule()
     }
   }
 
   function schedule(): void {
-    if (timer) return
+    if (stopped || timer) return
     timer = setTimeout(() => {
       void run()
     }, options.intervalMs)
   }
 
   function stop(): void {
+    stopped = true
     if (!timer) return
     clearTimeout(timer)
     timer = undefined

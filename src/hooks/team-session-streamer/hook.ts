@@ -4,11 +4,12 @@ import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { getTeamMemberFifoPath } from "../../features/team-mode/team-layout-tmux/fifo-path"
 import * as teamStateStore from "../../features/team-mode/team-state-store"
 import { log } from "../../shared/logger"
-import { clearSessionPartState, previewPendingEvent } from "./apply-pending-event"
+import { clearSessionPartState, type PendingEventPreview, previewPendingEvent } from "./apply-pending-event"
 import { type MessagePartDeltaEvent, normalizeDeltaEventForBuffer, normalizeUpdateEventForBuffer } from "./event-normalizer"
 import { writeTeamSessionFifo } from "./fifo-writer"
 import { createPendingDeltaBuffer, type PendingStreamEvent } from "./pending-delta-buffer"
 import { createPendingRetryScheduler } from "./pending-retry-scheduler"
+import { createStreamGeneration } from "./stream-generation"
 
 type TeamStateStore = Pick<typeof teamStateStore, "listActiveTeams" | "loadRuntimeState">
 
@@ -23,6 +24,8 @@ type TeamSessionStreamTarget = {
 type HookInput = { event: StreamEvent }
 type HookImpl = { event: (input: HookInput) => Promise<void>; dispose: () => void }
 
+type AttemptWriteResult = { written: boolean; preview?: PendingEventPreview }
+
 const DROPPABLE_FIFO_ERROR_CODES = new Set(["ENXIO", "ENOENT", "EPIPE"])
 const PENDING_RESOLVE_RETRY_MS = 250
 
@@ -34,6 +37,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   const streamTargetsBySession = new Map<string, TeamSessionStreamTarget>()
   const partTextByKey = new Map<string, string>()
   const pendingDeltaBuffer = createPendingDeltaBuffer()
+  const generation = createStreamGeneration()
 
   async function resolveStreamTarget(sessionID: string): Promise<TeamSessionStreamTarget | undefined> {
     const cachedTarget = streamTargetsBySession.get(sessionID)
@@ -90,26 +94,41 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     }
   }
 
-  async function writePendingEvent(
+  async function attemptWrite(
     target: TeamSessionStreamTarget,
     sessionID: string,
     pending: PendingStreamEvent,
-  ): Promise<boolean> {
+  ): Promise<AttemptWriteResult> {
     const preview = previewPendingEvent(pending, sessionID, partTextByKey)
-    if (!preview) return true
+    if (!preview) return { written: true }
     const written = await writeSegment(target, sessionID, preview.appendedText)
-    if (written) partTextByKey.set(preview.partKey, preview.nextState)
-    else pendingDeltaBuffer.enqueue(sessionID, pending)
-    return written
+    return { written, preview: written ? preview : undefined }
   }
 
   async function drainAndWrite(target: TeamSessionStreamTarget, sessionID: string): Promise<boolean> {
+    const drainSessionGen = generation.captureSession(sessionID)
     const drained = pendingDeltaBuffer.drain(sessionID)
+    const drainPartGens = new Map<string, number>()
+    for (const pending of drained) {
+      if (!drainPartGens.has(pending.partID)) {
+        drainPartGens.set(pending.partID, generation.capturePart(sessionID, pending.partID))
+      }
+    }
     for (let i = 0; i < drained.length; i++) {
-      const written = await writePendingEvent(target, sessionID, drained[i])
-      if (!written) {
+      const pending = drained[i]
+      const startPartGen = drainPartGens.get(pending.partID) ?? 0
+      const result = await attemptWrite(target, sessionID, pending)
+      if (!generation.isSessionCurrent(sessionID, drainSessionGen)) return false
+      if (!generation.isPartCurrent(sessionID, pending.partID, startPartGen)) continue
+      if (result.preview) partTextByKey.set(result.preview.partKey, result.preview.nextState)
+      if (!result.written) {
+        pendingDeltaBuffer.enqueue(sessionID, pending)
         for (let j = i + 1; j < drained.length; j++) {
-          pendingDeltaBuffer.enqueue(sessionID, drained[j])
+          const remaining = drained[j]
+          const remainingStart = drainPartGens.get(remaining.partID) ?? 0
+          if (generation.isPartCurrent(sessionID, remaining.partID, remainingStart)) {
+            pendingDeltaBuffer.enqueue(sessionID, remaining)
+          }
         }
         return false
       }
@@ -127,7 +146,11 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   })
 
   async function handlePendingEvent(sessionID: string, pending: PendingStreamEvent): Promise<void> {
+    const sessionGenAtStart = generation.captureSession(sessionID)
+    const partGenAtStart = generation.capturePart(sessionID, pending.partID)
     const target = await resolveStreamTarget(sessionID)
+    if (!generation.isSessionCurrent(sessionID, sessionGenAtStart)) return
+    if (!generation.isPartCurrent(sessionID, pending.partID, partGenAtStart)) return
     if (!target) {
       pendingDeltaBuffer.enqueue(sessionID, pending)
       retryScheduler.schedule()
@@ -144,6 +167,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
 
       if (event.type === "session.deleted") {
         const sessionID = event.properties.info.id
+        generation.bumpSession(sessionID)
         streamTargetsBySession.delete(sessionID)
         pendingDeltaBuffer.clearSession(sessionID)
         clearSessionPartState(sessionID, partTextByKey)
@@ -153,6 +177,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
 
       if (event.type === "message.part.removed") {
         const { sessionID, partID } = event.properties
+        generation.bumpPart(sessionID, partID)
         pendingDeltaBuffer.removePart(sessionID, partID)
         partTextByKey.delete(`${sessionID}:${partID}`)
         if (pendingDeltaBuffer.getPendingSessions().length === 0) retryScheduler.stop()
@@ -162,6 +187,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
       if (event.type === "session.error") {
         const sessionID = event.properties.sessionID
         if (sessionID) {
+          generation.bumpSession(sessionID)
           streamTargetsBySession.delete(sessionID)
           pendingDeltaBuffer.clearSession(sessionID)
           clearSessionPartState(sessionID, partTextByKey)

@@ -70,4 +70,35 @@ describe("createPendingRetryScheduler", () => {
     expect(pending.size).toBe(0)
     scheduler.stop()
   })
+
+  test("aborts the in-flight run and does not reschedule when stop is called during drain", async () => {
+    // given
+    const pending = new Set(["session-a", "session-b", "session-c"])
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const drained: string[] = []
+    const drainSession = mock(async (sessionID: string) => {
+      drained.push(sessionID)
+      if (sessionID === "session-a") await gate
+      pending.delete(sessionID)
+    })
+    const scheduler = createPendingRetryScheduler({
+      intervalMs: 10,
+      getPendingSessions: () => Array.from(pending),
+      drainSession,
+    })
+
+    // when
+    scheduler.schedule()
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 30))
+    scheduler.stop()
+    release?.()
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 80))
+
+    // then
+    expect(drained).toEqual(["session-a"])
+    expect(pending.size).toBe(2)
+  })
 })

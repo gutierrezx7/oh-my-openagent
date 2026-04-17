@@ -651,4 +651,151 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
     expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "fresh")
   })
+
+  test("does not restore cleared dedupe state when session.deleted arrives during an in-flight write", async () => {
+    // given
+    const listActiveTeams = mock(async () => [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let releaseSecondWrite: (() => void) | undefined
+    const secondWriteGate = new Promise<void>((resolve) => {
+      releaseSecondWrite = resolve
+    })
+    let callCount = 0
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      callCount += 1
+      if (callCount === 2) await secondWriteGate
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "part-a", sessionID: "member-session", messageID: "msg-a", type: "text", text: "A\n" },
+        },
+      },
+    })
+    const gatedEventPromise = streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "part-a", sessionID: "member-session", messageID: "msg-a", type: "text", text: "A\nB\n" },
+        },
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    await streamer.event({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "member-session" } as never },
+      },
+    })
+    releaseSecondWrite?.()
+    await gatedEventPromise
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "part-a", sessionID: "member-session", messageID: "msg-a", type: "text", text: "A\nB\nC\n" },
+        },
+      },
+    })
+    streamer.dispose()
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(3)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "A\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "B\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "A\nB\nC\n")
+  })
+
+  test("skips state mutation when message.part.removed arrives for the drained partID during write", async () => {
+    // given
+    const listActiveTeams = mock(async () => [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let releaseSecondWrite: (() => void) | undefined
+    const secondWriteGate = new Promise<void>((resolve) => {
+      releaseSecondWrite = resolve
+    })
+    let callCount = 0
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      callCount += 1
+      if (callCount === 2) await secondWriteGate
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-a",
+            sessionID: "member-session",
+            messageID: "msg-a",
+            type: "text",
+            text: "first-wave\n",
+          },
+        },
+      },
+    })
+    const slowEvent = streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-a",
+            sessionID: "member-session",
+            messageID: "msg-a",
+            type: "text",
+            text: "first-wave\nin-flight\n",
+          },
+        },
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    await streamer.event({
+      event: {
+        type: "message.part.removed",
+        properties: { sessionID: "member-session", messageID: "msg-a", partID: "part-a" },
+      },
+    })
+    releaseSecondWrite?.()
+    await slowEvent
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-a",
+            sessionID: "member-session",
+            messageID: "msg-a",
+            type: "text",
+            text: "first-wave\nin-flight\n",
+          },
+        },
+      },
+    })
+    streamer.dispose()
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(3)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "first-wave\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "first-wave\nin-flight\n")
+  })
 })
