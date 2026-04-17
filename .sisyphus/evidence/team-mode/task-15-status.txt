@@ -1,0 +1,3 @@
+Target: src/features/team-mode/team-runtime/status.ts
+Test: bun test src/features/team-mode/team-runtime/status.test.ts
+Result: pass
