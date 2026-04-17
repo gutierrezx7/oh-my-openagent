@@ -42,7 +42,9 @@ export async function deleteTeam(
   }
 
   if (bgMgr && runtimeState.leadSessionId) {
+    const teamMessageMarkerPrefix = `team-create:${teamRunId}:`
     const teamTasks = bgMgr.getTasksByParentSession(runtimeState.leadSessionId)
+      .filter((task) => task.parentMessageID?.startsWith(teamMessageMarkerPrefix))
     await Promise.all(teamTasks.map((task) => bgMgr.cancelTask(task.id, {
       source: "team-mode-delete",
       reason: `delete team ${teamRunId}`,

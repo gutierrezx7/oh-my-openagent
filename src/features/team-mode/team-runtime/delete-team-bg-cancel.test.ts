@@ -8,7 +8,7 @@ import { createFixture, updateMemberStatuses } from "./shutdown-test-fixtures"
 
 const { deleteTeam } = await import("./delete-team")
 
-describe("deleteTeam — cancels background tasks by leadSessionId", () => {
+describe("deleteTeam cancels only this team's background tasks", () => {
   const temporaryDirectories: string[] = []
 
   afterEach(async () => {
@@ -17,7 +17,7 @@ describe("deleteTeam — cancels background tasks by leadSessionId", () => {
     }))
   })
 
-  test("uses leadSessionId (not teamRunId) as getTasksByParentSession key", async () => {
+  test("uses leadSessionId as the getTasksByParentSession key", async () => {
     // given
     const fixture = await createFixture()
     temporaryDirectories.push(fixture.baseDir)
@@ -29,8 +29,8 @@ describe("deleteTeam — cancels background tasks by leadSessionId", () => {
     const getTasksByParentSessionMock = mock((sessionID: string) => {
       if (sessionID !== "lead-session") return []
       return [
-        { id: "task-a", sessionID: "session-a" },
-        { id: "task-b", sessionID: "session-b" },
+        { id: "team-task-a", sessionID: "session-a", parentMessageID: `team-create:${fixture.teamRunId}:member-a` },
+        { id: "team-task-b", sessionID: "session-b", parentMessageID: `team-create:${fixture.teamRunId}:member-b` },
       ]
     })
     const cancelTaskMock = mock(async () => true)
@@ -48,11 +48,11 @@ describe("deleteTeam — cancels background tasks by leadSessionId", () => {
     expect(cancelTaskMock).toHaveBeenCalledTimes(2)
     const firstCall = cancelTaskMock.mock.calls[0]
     const secondCall = cancelTaskMock.mock.calls[1]
-    expect(firstCall?.[0]).toBe("task-a")
-    expect(secondCall?.[0]).toBe("task-b")
+    expect(firstCall?.[0]).toBe("team-task-a")
+    expect(secondCall?.[0]).toBe("team-task-b")
   })
 
-  test("skips cancellation when runtimeState.leadSessionId is absent", async () => {
+  test("leaves unrelated sibling tasks on the same lead session alive", async () => {
     // given
     const fixture = await createFixture()
     temporaryDirectories.push(fixture.baseDir)
@@ -62,7 +62,10 @@ describe("deleteTeam — cancels background tasks by leadSessionId", () => {
     })
 
     const getTasksByParentSessionMock = mock(() => [
-      { id: "task-a", sessionID: "session-a" },
+      { id: "team-task-a", sessionID: "session-a", parentMessageID: `team-create:${fixture.teamRunId}:member-a` },
+      { id: "delegate-task-x", sessionID: "session-x", parentMessageID: "delegate-task:plan-refactor" },
+      { id: "background-task-y", sessionID: "session-y", parentMessageID: undefined },
+      { id: "team-task-other", sessionID: "session-other", parentMessageID: "team-create:other-team-id:member-a" },
     ])
     const cancelTaskMock = mock(async () => true)
     const bgMgr = {
@@ -74,9 +77,8 @@ describe("deleteTeam — cancels background tasks by leadSessionId", () => {
     await deleteTeam(fixture.teamRunId, fixture.config, undefined, bgMgr)
 
     // then
-    expect(getTasksByParentSessionMock).toHaveBeenCalled()
-    const parentSessionArg = getTasksByParentSessionMock.mock.calls[0]?.[0]
-    expect(parentSessionArg).not.toBe(fixture.teamRunId)
-    expect(parentSessionArg).toBe("lead-session")
+    expect(cancelTaskMock).toHaveBeenCalledTimes(1)
+    const cancelledTaskId = cancelTaskMock.mock.calls[0]?.[0]
+    expect(cancelledTaskId).toBe("team-task-a")
   })
 })
