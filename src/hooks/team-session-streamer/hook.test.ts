@@ -717,6 +717,112 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "A\nB\nC\n")
   })
 
+  test("does not write a drained partID that was removed mid-drain during another partID's in-flight write", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let releaseFirstWrite: (() => void) | undefined
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    let callCount = 0
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      callCount += 1
+      if (callCount === 1) await firstWriteGate
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-a", field: "text", delta: "AA" },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-b", field: "text", delta: "BB" },
+      },
+    })
+    mappingReady = true
+    const drainPromise = streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-a", field: "text", delta: "AAA" },
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    await streamer.event({
+      event: {
+        type: "message.part.removed",
+        properties: { sessionID: "member-session", messageID: "msg-b", partID: "part-b" },
+      },
+    })
+    releaseFirstWrite?.()
+    await drainPromise
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(2)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "AA")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "AAA")
+  })
+
+  test("lifecycle stop is reversible so a later session can still use the polling rescue", async () => {
+    // given
+    let mappingReady = true
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-x", field: "text", delta: "early\n" },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "member-session" } as never },
+      },
+    })
+    mappingReady = false
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-y", field: "text", delta: "stranded\n" },
+      },
+    })
+    mappingReady = true
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(2)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "early\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "stranded\n")
+  })
+
   test("skips state mutation when message.part.removed arrives for the drained partID during write", async () => {
     // given
     const listActiveTeams = mock(async () => [{

@@ -3,6 +3,7 @@ import { log } from "../../shared/logger"
 export type PendingRetryScheduler = {
   schedule: () => void
   stop: () => void
+  dispose: () => void
 }
 
 export type PendingRetrySchedulerOptions = {
@@ -13,15 +14,15 @@ export type PendingRetrySchedulerOptions = {
 
 export function createPendingRetryScheduler(options: PendingRetrySchedulerOptions): PendingRetryScheduler {
   let timer: ReturnType<typeof setTimeout> | undefined
-  let stopped = false
+  let disposed = false
 
   async function run(): Promise<void> {
     timer = undefined
-    if (stopped) return
+    if (disposed) return
     try {
       const sessions = options.getPendingSessions()
       for (const sessionID of sessions) {
-        if (stopped) return
+        if (disposed) return
         try {
           await options.drainSession(sessionID)
         } catch (error) {
@@ -33,23 +34,27 @@ export function createPendingRetryScheduler(options: PendingRetrySchedulerOption
         }
       }
     } finally {
-      if (!stopped && options.getPendingSessions().length > 0) schedule()
+      if (!disposed && options.getPendingSessions().length > 0) schedule()
     }
   }
 
   function schedule(): void {
-    if (stopped || timer) return
+    if (disposed || timer) return
     timer = setTimeout(() => {
       void run()
     }, options.intervalMs)
   }
 
   function stop(): void {
-    stopped = true
     if (!timer) return
     clearTimeout(timer)
     timer = undefined
   }
 
-  return { schedule, stop }
+  function dispose(): void {
+    disposed = true
+    stop()
+  }
+
+  return { schedule, stop, dispose }
 }

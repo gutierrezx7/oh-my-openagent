@@ -71,7 +71,7 @@ describe("createPendingRetryScheduler", () => {
     scheduler.stop()
   })
 
-  test("aborts the in-flight run and does not reschedule when stop is called during drain", async () => {
+  test("aborts the in-flight run and does not reschedule when dispose is called during drain", async () => {
     // given
     const pending = new Set(["session-a", "session-b", "session-c"])
     let release: (() => void) | undefined
@@ -93,12 +93,59 @@ describe("createPendingRetryScheduler", () => {
     // when
     scheduler.schedule()
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 30))
-    scheduler.stop()
+    scheduler.dispose()
     release?.()
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 80))
 
     // then
     expect(drained).toEqual(["session-a"])
     expect(pending.size).toBe(2)
+  })
+
+  test("stop is reversible: later schedule calls can re-arm the timer", async () => {
+    // given
+    const pending = new Set(["session-a"])
+    const drainSession = mock(async (sessionID: string) => {
+      pending.delete(sessionID)
+    })
+    const scheduler = createPendingRetryScheduler({
+      intervalMs: 10,
+      getPendingSessions: () => Array.from(pending),
+      drainSession,
+    })
+
+    // when
+    scheduler.schedule()
+    scheduler.stop()
+    expect(drainSession).not.toHaveBeenCalled()
+    pending.add("session-b")
+    scheduler.schedule()
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50))
+
+    // then
+    expect(drainSession).toHaveBeenCalled()
+    expect(pending.has("session-b")).toBe(false)
+    scheduler.dispose()
+  })
+
+  test("dispose permanently blocks further scheduling", async () => {
+    // given
+    const pending = new Set(["session-a"])
+    const drainSession = mock(async (sessionID: string) => {
+      pending.delete(sessionID)
+    })
+    const scheduler = createPendingRetryScheduler({
+      intervalMs: 10,
+      getPendingSessions: () => Array.from(pending),
+      drainSession,
+    })
+
+    // when
+    scheduler.dispose()
+    scheduler.schedule()
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50))
+
+    // then
+    expect(drainSession).not.toHaveBeenCalled()
   })
 })

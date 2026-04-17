@@ -9,7 +9,7 @@ import { type MessagePartDeltaEvent, normalizeDeltaEventForBuffer, normalizeUpda
 import { writeTeamSessionFifo } from "./fifo-writer"
 import { createPendingDeltaBuffer, type PendingStreamEvent } from "./pending-delta-buffer"
 import { createPendingRetryScheduler } from "./pending-retry-scheduler"
-import { createStreamGeneration } from "./stream-generation"
+import { createStreamGeneration, type GenerationToken } from "./stream-generation"
 
 type TeamStateStore = Pick<typeof teamStateStore, "listActiveTeams" | "loadRuntimeState">
 
@@ -106,27 +106,30 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   }
 
   async function drainAndWrite(target: TeamSessionStreamTarget, sessionID: string): Promise<boolean> {
-    const drainSessionGen = generation.captureSession(sessionID)
+    const drainSessionToken = generation.captureSession(sessionID)
     const drained = pendingDeltaBuffer.drain(sessionID)
-    const drainPartGens = new Map<string, number>()
+    const drainPartTokens = new Map<string, GenerationToken>()
     for (const pending of drained) {
-      if (!drainPartGens.has(pending.partID)) {
-        drainPartGens.set(pending.partID, generation.capturePart(sessionID, pending.partID))
+      if (!drainPartTokens.has(pending.partID)) {
+        drainPartTokens.set(pending.partID, generation.capturePart(sessionID, pending.partID))
       }
     }
     for (let i = 0; i < drained.length; i++) {
       const pending = drained[i]
-      const startPartGen = drainPartGens.get(pending.partID) ?? 0
+      const startPartToken = drainPartTokens.get(pending.partID)
+      if (!startPartToken) continue
+      if (!generation.isSessionCurrent(sessionID, drainSessionToken)) return false
+      if (!generation.isPartCurrent(sessionID, pending.partID, startPartToken)) continue
       const result = await attemptWrite(target, sessionID, pending)
-      if (!generation.isSessionCurrent(sessionID, drainSessionGen)) return false
-      if (!generation.isPartCurrent(sessionID, pending.partID, startPartGen)) continue
+      if (!generation.isSessionCurrent(sessionID, drainSessionToken)) return false
+      if (!generation.isPartCurrent(sessionID, pending.partID, startPartToken)) continue
       if (result.preview) partTextByKey.set(result.preview.partKey, result.preview.nextState)
       if (!result.written) {
         pendingDeltaBuffer.enqueue(sessionID, pending)
         for (let j = i + 1; j < drained.length; j++) {
           const remaining = drained[j]
-          const remainingStart = drainPartGens.get(remaining.partID) ?? 0
-          if (generation.isPartCurrent(sessionID, remaining.partID, remainingStart)) {
+          const remainingToken = drainPartTokens.get(remaining.partID)
+          if (remainingToken && generation.isPartCurrent(sessionID, remaining.partID, remainingToken)) {
             pendingDeltaBuffer.enqueue(sessionID, remaining)
           }
         }
@@ -146,11 +149,11 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   })
 
   async function handlePendingEvent(sessionID: string, pending: PendingStreamEvent): Promise<void> {
-    const sessionGenAtStart = generation.captureSession(sessionID)
-    const partGenAtStart = generation.capturePart(sessionID, pending.partID)
+    const sessionTokenAtStart = generation.captureSession(sessionID)
+    const partTokenAtStart = generation.capturePart(sessionID, pending.partID)
     const target = await resolveStreamTarget(sessionID)
-    if (!generation.isSessionCurrent(sessionID, sessionGenAtStart)) return
-    if (!generation.isPartCurrent(sessionID, pending.partID, partGenAtStart)) return
+    if (!generation.isSessionCurrent(sessionID, sessionTokenAtStart)) return
+    if (!generation.isPartCurrent(sessionID, pending.partID, partTokenAtStart)) return
     if (!target) {
       pendingDeltaBuffer.enqueue(sessionID, pending)
       retryScheduler.schedule()
@@ -171,6 +174,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         streamTargetsBySession.delete(sessionID)
         pendingDeltaBuffer.clearSession(sessionID)
         clearSessionPartState(sessionID, partTextByKey)
+        generation.clearSession(sessionID)
         if (pendingDeltaBuffer.getPendingSessions().length === 0) retryScheduler.stop()
         return
       }
@@ -180,6 +184,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         generation.bumpPart(sessionID, partID)
         pendingDeltaBuffer.removePart(sessionID, partID)
         partTextByKey.delete(`${sessionID}:${partID}`)
+        generation.clearPart(sessionID, partID)
         if (pendingDeltaBuffer.getPendingSessions().length === 0) retryScheduler.stop()
         return
       }
@@ -191,6 +196,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
           streamTargetsBySession.delete(sessionID)
           pendingDeltaBuffer.clearSession(sessionID)
           clearSessionPartState(sessionID, partTextByKey)
+          generation.clearSession(sessionID)
         }
         if (pendingDeltaBuffer.getPendingSessions().length === 0) retryScheduler.stop()
         return
@@ -209,7 +215,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
       await handlePendingEvent(event.properties.part.sessionID, pending)
     },
     dispose: () => {
-      retryScheduler.stop()
+      retryScheduler.dispose()
     },
   }
 }

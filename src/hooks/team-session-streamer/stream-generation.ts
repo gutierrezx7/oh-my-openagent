@@ -1,34 +1,64 @@
+export type GenerationToken = symbol
+
 export type StreamGeneration = {
   bumpSession: (sessionID: string) => void
   bumpPart: (sessionID: string, partID: string) => void
-  captureSession: (sessionID: string) => number
-  capturePart: (sessionID: string, partID: string) => number
-  isSessionCurrent: (sessionID: string, generation: number) => boolean
-  isPartCurrent: (sessionID: string, partID: string, generation: number) => boolean
+  captureSession: (sessionID: string) => GenerationToken
+  capturePart: (sessionID: string, partID: string) => GenerationToken
+  isSessionCurrent: (sessionID: string, token: GenerationToken) => boolean
+  isPartCurrent: (sessionID: string, partID: string, token: GenerationToken) => boolean
+  clearSession: (sessionID: string) => void
+  clearPart: (sessionID: string, partID: string) => void
+  size: () => { sessions: number; parts: number }
 }
 
 export function createStreamGeneration(): StreamGeneration {
-  const sessionGen = new Map<string, number>()
-  const partGen = new Map<string, number>()
+  const sessionTokens = new Map<string, GenerationToken>()
+  const partTokens = new Map<string, GenerationToken>()
 
-  function sessionValue(sessionID: string): number {
-    return sessionGen.get(sessionID) ?? 0
+  function partKey(sessionID: string, partID: string): string {
+    return `${sessionID}:${partID}`
   }
 
-  function partValue(sessionID: string, partID: string): number {
-    return partGen.get(`${sessionID}:${partID}`) ?? 0
+  function ensureSessionToken(sessionID: string): GenerationToken {
+    let token = sessionTokens.get(sessionID)
+    if (!token) {
+      token = Symbol(sessionID)
+      sessionTokens.set(sessionID, token)
+    }
+    return token
+  }
+
+  function ensurePartToken(sessionID: string, partID: string): GenerationToken {
+    const key = partKey(sessionID, partID)
+    let token = partTokens.get(key)
+    if (!token) {
+      token = Symbol(key)
+      partTokens.set(key, token)
+    }
+    return token
   }
 
   return {
     bumpSession: (sessionID) => {
-      sessionGen.set(sessionID, sessionValue(sessionID) + 1)
+      sessionTokens.set(sessionID, Symbol(sessionID))
     },
     bumpPart: (sessionID, partID) => {
-      partGen.set(`${sessionID}:${partID}`, partValue(sessionID, partID) + 1)
+      partTokens.set(partKey(sessionID, partID), Symbol(partKey(sessionID, partID)))
     },
-    captureSession: sessionValue,
-    capturePart: partValue,
-    isSessionCurrent: (sessionID, generation) => sessionValue(sessionID) === generation,
-    isPartCurrent: (sessionID, partID, generation) => partValue(sessionID, partID) === generation,
+    captureSession: ensureSessionToken,
+    capturePart: ensurePartToken,
+    isSessionCurrent: (sessionID, token) => sessionTokens.get(sessionID) === token,
+    isPartCurrent: (sessionID, partID, token) => partTokens.get(partKey(sessionID, partID)) === token,
+    clearSession: (sessionID) => {
+      sessionTokens.delete(sessionID)
+      for (const key of Array.from(partTokens.keys())) {
+        if (key.startsWith(`${sessionID}:`)) partTokens.delete(key)
+      }
+    },
+    clearPart: (sessionID, partID) => {
+      partTokens.delete(partKey(sessionID, partID))
+    },
+    size: () => ({ sessions: sessionTokens.size, parts: partTokens.size }),
   }
 }
