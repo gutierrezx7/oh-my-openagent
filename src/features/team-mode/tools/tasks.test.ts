@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test"
 import type { ToolContext } from "@opencode-ai/plugin/tool"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import type { RuntimeState, Task } from "../types"
+
+const mockClient = {} as OpencodeClient
 
 const createTaskMock = mock(async () => ({ id: "1", subject: "task one" } as Task))
 const listTasksMock = mock(async () => [{ id: "1", status: "pending" } as Task])
@@ -94,10 +97,10 @@ describe("team task tools", () => {
   test("create -> list -> claim -> complete flow", async () => {
     // given
     const config = createConfig()
-    const createTool = createTeamTaskCreateTool(config)
-    const listTool = createTeamTaskListTool(config)
-    const updateTool = createTeamTaskUpdateTool(config)
-    const getTool = createTeamTaskGetTool(config)
+    const createTool = createTeamTaskCreateTool(config, mockClient)
+    const listTool = createTeamTaskListTool(config, mockClient)
+    const updateTool = createTeamTaskUpdateTool(config, mockClient)
+    const getTool = createTeamTaskGetTool(config, mockClient)
 
     // when
     const created = JSON.parse(await createTool.execute({ teamRunId: "team-run-1", subject: "task one", description: "desc" }, createContext("member-session-a")))
@@ -127,25 +130,25 @@ describe("team task tools", () => {
     // given
     const config = createConfig()
     updateTaskStatusMock.mockImplementationOnce(async () => { throw new Error("CrossOwnerUpdateError") })
-    const updateTool = createTeamTaskUpdateTool(config)
+    const updateTool = createTeamTaskUpdateTool(config, mockClient)
 
     // when
     const result = updateTool.execute({ teamRunId: "team-run-1", taskId: "1", status: "in_progress", owner: "member-b" }, createContext("member-session-a"))
 
     // then
-    await expect(result).rejects.toThrow("CrossOwnerUpdateError")
+    expect(result).rejects.toThrow("CrossOwnerUpdateError")
   })
 
   test("blockedBy enforcement", async () => {
     // given
     const config = createConfig()
     claimTaskMock.mockImplementationOnce(async () => { throw new Error("blocked by 2") })
-    const updateTool = createTeamTaskUpdateTool(config)
+    const updateTool = createTeamTaskUpdateTool(config, mockClient)
 
     // when
     const result = updateTool.execute({ teamRunId: "team-run-1", taskId: "1", status: "claimed" }, createContext("member-session-a"))
 
     // then
-    await expect(result).rejects.toThrow("blocked by 2")
+    expect(result).rejects.toThrow("blocked by 2")
   })
 })

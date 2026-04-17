@@ -4,6 +4,9 @@ import { describe, expect, mock, test } from "bun:test"
 
 import type { ToolContext } from "@opencode-ai/plugin/tool"
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
+import type { OpencodeClient } from "../../../tools/delegate-task/types"
+
+const mockClient = {} as OpencodeClient
 
 let aggregateStatusImplementation: typeof import("../team-runtime/status").aggregateStatus = async () => {
   throw new Error("aggregateStatusImplementation not set")
@@ -73,7 +76,7 @@ describe("query tools", () => {
       expect(passedConfig).toBe(config)
       return expectedStatus
     }
-    const tool = createTeamStatusTool(config)
+    const tool = createTeamStatusTool(config, mockClient)
 
     // when
     const result = JSON.parse(await tool.execute({ teamRunId: "team-run-1" }, createMockContext()))
@@ -101,7 +104,7 @@ describe("query tools", () => {
     listActiveTeamsImplementation = async () => [
       { teamRunId: "run-1", teamName: "bar", status: "active", memberCount: 3, scope: "user" },
     ]
-    const tool = createTeamListTool(config)
+    const tool = createTeamListTool(config, mockClient)
 
     // when
     const result = JSON.parse(await tool.execute({}, createMockContext()))

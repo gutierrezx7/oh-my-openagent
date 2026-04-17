@@ -304,24 +304,26 @@ export function createToolRegistry(args: {
     ? {
         team_create: factories.createTeamCreateTool(
           pluginConfig.team_mode,
+          ctx.client,
           managers.backgroundManager,
           managers.tmuxSessionManager,
         ),
         team_delete: factories.createTeamDeleteTool(
           pluginConfig.team_mode,
+          ctx.client,
           managers.backgroundManager,
           managers.tmuxSessionManager,
         ),
-        team_shutdown_request: factories.createTeamShutdownRequestTool(pluginConfig.team_mode),
-        team_approve_shutdown: factories.createTeamApproveShutdownTool(pluginConfig.team_mode),
-        team_reject_shutdown: factories.createTeamRejectShutdownTool(pluginConfig.team_mode),
-        team_send_message: factories.createTeamSendMessageTool(pluginConfig.team_mode),
-        team_task_create: factories.createTeamTaskCreateTool(pluginConfig.team_mode),
-        team_task_list: factories.createTeamTaskListTool(pluginConfig.team_mode),
-        team_task_update: factories.createTeamTaskUpdateTool(pluginConfig.team_mode),
-        team_task_get: factories.createTeamTaskGetTool(pluginConfig.team_mode),
-        team_status: factories.createTeamStatusTool(pluginConfig.team_mode, managers.backgroundManager),
-        team_list: factories.createTeamListTool(pluginConfig.team_mode),
+        team_shutdown_request: factories.createTeamShutdownRequestTool(pluginConfig.team_mode, ctx.client),
+        team_approve_shutdown: factories.createTeamApproveShutdownTool(pluginConfig.team_mode, ctx.client),
+        team_reject_shutdown: factories.createTeamRejectShutdownTool(pluginConfig.team_mode, ctx.client),
+        team_send_message: factories.createTeamSendMessageTool(pluginConfig.team_mode, ctx.client),
+        team_task_create: factories.createTeamTaskCreateTool(pluginConfig.team_mode, ctx.client),
+        team_task_list: factories.createTeamTaskListTool(pluginConfig.team_mode, ctx.client),
+        team_task_update: factories.createTeamTaskUpdateTool(pluginConfig.team_mode, ctx.client),
+        team_task_get: factories.createTeamTaskGetTool(pluginConfig.team_mode, ctx.client),
+        team_status: factories.createTeamStatusTool(pluginConfig.team_mode, ctx.client, managers.backgroundManager),
+        team_list: factories.createTeamListTool(pluginConfig.team_mode, ctx.client),
       }
     : {}
 

@@ -1,6 +1,7 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import { loadTeamSpec } from "../team-registry/loader"
 import { aggregateStatus } from "../team-runtime/status"
 import { discoverTeamSpecs } from "../team-registry/paths"
@@ -20,7 +21,13 @@ function getProjectRoot(): string {
   return process.cwd()
 }
 
-export function createTeamStatusTool(config: TeamModeConfig, backgroundManager?: Parameters<typeof aggregateStatus>[2]): ToolDefinition {
+export function createTeamStatusTool(
+  config: TeamModeConfig,
+  client: OpencodeClient,
+  backgroundManager?: Parameters<typeof aggregateStatus>[2],
+): ToolDefinition {
+  void client
+
   return tool({
     description: "Return full status for a team run.",
     args: {
@@ -30,7 +37,9 @@ export function createTeamStatusTool(config: TeamModeConfig, backgroundManager?:
   })
 }
 
-export function createTeamListTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamListTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "List declared and active teams.",
     args: {

@@ -1,6 +1,7 @@
 import { tool, type ToolDefinition, type ToolContext } from "@opencode-ai/plugin/tool"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import { loadRuntimeState } from "../team-state-store"
 import { createTask, getTask, listTasks, updateTaskStatus, claimTask } from "../team-tasklist"
 
@@ -49,7 +50,9 @@ async function resolveSenderName(teamRunId: string, config: TeamModeConfig, sess
   throw new Error(`team member not found for session ${sessionID ?? "unknown"}`)
 }
 
-export function createTeamTaskCreateTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamTaskCreateTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "Create a team task.",
     args: {
@@ -58,7 +61,7 @@ export function createTeamTaskCreateTool(config: TeamModeConfig): ToolDefinition
       description: tool.schema.string().describe("Task description"),
       blockedBy: tool.schema.array(tool.schema.string()).optional().describe("Blocking task IDs"),
     },
-    execute: async (args: TeamTaskCreateArgs, ctx?: TeamTaskToolContext): Promise<string> => {
+    execute: async (args: TeamTaskCreateArgs): Promise<string> => {
       const createdTask = await createTask(args.teamRunId, {
         subject: args.subject,
         description: args.description,
@@ -72,7 +75,9 @@ export function createTeamTaskCreateTool(config: TeamModeConfig): ToolDefinition
   })
 }
 
-export function createTeamTaskListTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamTaskListTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "List team tasks.",
     args: {
@@ -87,7 +92,9 @@ export function createTeamTaskListTool(config: TeamModeConfig): ToolDefinition {
   })
 }
 
-export function createTeamTaskUpdateTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamTaskUpdateTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "Update a team task.",
     args: {
@@ -108,7 +115,9 @@ export function createTeamTaskUpdateTool(config: TeamModeConfig): ToolDefinition
   })
 }
 
-export function createTeamTaskGetTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamTaskGetTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "Get a team task.",
     args: {

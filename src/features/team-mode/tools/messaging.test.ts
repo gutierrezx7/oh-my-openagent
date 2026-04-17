@@ -8,11 +8,14 @@ import path from "node:path"
 
 import { type ToolContext } from "@opencode-ai/plugin/tool"
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
+import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import { BroadcastNotPermittedError } from "../team-mailbox/send"
 import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
 import { createRuntimeState, saveRuntimeState } from "../team-state-store/store"
 import { MessageSchema } from "../types"
 import { createTeamSendMessageTool } from "./messaging"
+
+const mockClient = {} as OpencodeClient
 
 async function createFixtureBaseDir(): Promise<string> {
   return await mkdtemp(path.join(tmpdir(), "team-send-message-"))
@@ -71,7 +74,7 @@ async function createTeamFixture() {
       leadSessionId,
       memberOneSessionId,
       memberTwoSessionId,
-      tool: createTeamSendMessageTool(config),
+      tool: createTeamSendMessageTool(config, mockClient),
       toolContext: (sessionID: string) => createToolContext(sessionID, baseDir),
     }
 }

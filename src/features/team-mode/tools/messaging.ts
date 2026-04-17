@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import { listActiveTeams, loadRuntimeState } from "../team-state-store/store"
 import { BroadcastNotPermittedError, sendMessage } from "../team-mailbox/send"
 
@@ -45,7 +46,9 @@ async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, c
   }
 }
 
-export function createTeamSendMessageTool(config: TeamModeConfig): ToolDefinition {
+export function createTeamSendMessageTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
+  void client
+
   return tool({
     description: "Send a message to a team member or broadcast to the team.",
     args: {
