@@ -10,13 +10,15 @@ export async function ackMessages(
   messageIds: string[],
   config: TeamModeConfig,
 ): Promise<void> {
-  const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, memberName)
+  const baseDir = resolveBaseDir(config)
+  const inboxDir = getInboxDir(baseDir, teamRunId, memberName)
   const processedDir = path.join(inboxDir, "processed")
   await mkdir(processedDir, { recursive: true, mode: 0o700 })
 
   for (const messageId of messageIds) {
-    const sourcePath = path.join(inboxDir, `${messageId}.json`)
-    const targetPath = path.join(processedDir, `${messageId}.json`)
+    const messageFileName = `${messageId}.json`
+    const sourcePath = path.join(inboxDir, messageFileName)
+    const targetPath = path.join(processedDir, messageFileName)
 
     try {
       await rename(sourcePath, targetPath)
