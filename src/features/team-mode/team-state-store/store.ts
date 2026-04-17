@@ -131,7 +131,7 @@ export async function transitionRuntimeState(
   const baseDir = resolveBaseDir(config)
   const runtimeDirectoryPath = getRuntimeStateDir(baseDir, teamRunId)
 
-  return await withLock(path.join(runtimeDirectoryPath, "state.lock"), async () => {
+  return withLock(path.join(runtimeDirectoryPath, "state.lock"), async () => {
     const currentRuntimeState = await loadRuntimeState(teamRunId, config)
     const nextRuntimeState = validateRuntimeState(transition(currentRuntimeState), teamRunId)
 
