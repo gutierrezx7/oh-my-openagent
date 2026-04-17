@@ -1,0 +1,213 @@
+/// <reference types="bun-types" />
+
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { access, mkdtemp, readdir, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+
+import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
+import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
+import type { BackgroundTask, LaunchInput } from "../../background-agent/types"
+import { BackgroundManager } from "../../background-agent/manager"
+import { loadRuntimeState } from "../team-state-store/store"
+import type { TeamSpec } from "../types"
+
+const resolveMemberMock = mock(async (member: TeamSpec["members"][number]) => ({
+  agentToUse: `${member.name}-agent`,
+  model: { providerID: "openai", modelID: "gpt-5.4-mini" },
+  fallbackChain: undefined,
+  systemContent: `system:${member.name}`,
+}))
+const createTeamLayoutMock = mock(async () => null)
+const removeTeamLayoutMock = mock(async () => undefined)
+
+mock.module("./resolve-member", () => ({ resolveMember: resolveMemberMock }))
+mock.module("../team-layout-tmux/layout", () => ({
+  createTeamLayout: createTeamLayoutMock,
+  removeTeamLayout: removeTeamLayoutMock,
+}))
+
+const { createTeamRun, TeamRunCreateError } = await import("./create")
+
+function createConfig(baseDir: string, maxParallelMembers = 4) {
+  return TeamModeConfigSchema.parse({ base_dir: baseDir, max_parallel_members: maxParallelMembers, max_wall_clock_minutes: 1 })
+}
+
+function createSpec(memberCount: number, withWorktrees = false): TeamSpec {
+  return {
+    version: 1,
+    name: "alpha-team",
+    createdAt: Date.now(),
+    leadAgentId: "member-1",
+    members: Array.from({ length: memberCount }, (_, index) => ({
+      kind: "category",
+      name: `member-${index + 1}`,
+      category: ["quick", "deep", "artistry"][index] ?? "deep",
+      prompt: `prompt-${index + 1}`,
+      backendType: "in-process",
+      isActive: true,
+      color: `color-${index + 1}`,
+      ...(withWorktrees ? { worktreePath: `./worktrees/member-${index + 1}` } : {}),
+    })),
+  }
+}
+
+function createContext(baseDir: string, manager: BackgroundManager): ExecutorContext & { client: { session: { create: ReturnType<typeof mock> } } } {
+  return {
+    client: { session: { create: mock(async () => ({ data: { id: "forbidden" } })) } } as ExecutorContext["client"] & { session: { create: ReturnType<typeof mock> } },
+    manager,
+    directory: baseDir,
+  }
+}
+
+function createManager(
+  baseDir: string,
+  launchImpl: (input: LaunchInput) => Promise<BackgroundTask>,
+  getTaskImpl: (taskId: string) => BackgroundTask | undefined = () => undefined,
+): { manager: BackgroundManager; launchMock: ReturnType<typeof mock>; cancelTaskMock: ReturnType<typeof mock> } {
+  const manager = new BackgroundManager({ client: {} as ExecutorContext["client"], directory: baseDir } as ConstructorParameters<typeof BackgroundManager>[0])
+  const launchMock = mock((input: LaunchInput) => launchImpl(input))
+  const getTaskMock = mock((taskId: string) => getTaskImpl(taskId))
+  const cancelTaskMock = mock(async () => true)
+  manager.launch = launchMock
+  manager.getTask = getTaskMock
+  manager.cancelTask = cancelTaskMock
+  return { manager, launchMock, cancelTaskMock }
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function loadSingleRuntimeState(baseDir: string) {
+  const [teamRunId] = await readdir(path.join(baseDir, "runtime"))
+  return await loadRuntimeState(teamRunId ?? "", createConfig(baseDir))
+}
+
+describe("createTeamRun", () => {
+  const temporaryDirectories: string[] = []
+
+  beforeEach(() => {
+    resolveMemberMock.mockClear()
+    createTeamLayoutMock.mockClear()
+    removeTeamLayoutMock.mockClear()
+  })
+
+  afterEach(async () => {
+    await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
+  })
+
+  test("spawns 3 members through BackgroundManager.launch without direct session creation", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-create-"))
+    temporaryDirectories.push(baseDir)
+    let launchCount = 0
+    const { manager, launchMock } = createManager(baseDir, async () => ({ id: `task-${++launchCount}`, sessionID: `session-${launchCount}`, status: "running" } as BackgroundTask))
+    const context = createContext(baseDir, manager)
+
+    // when
+    const runtimeState = await createTeamRun(createSpec(3), "lead-session", context, createConfig(baseDir), manager)
+
+    // then
+    expect(launchMock).toHaveBeenCalledTimes(3)
+    expect(context.client.session.create).toHaveBeenCalledTimes(0)
+    expect(runtimeState.status).toBe("active")
+    expect(runtimeState.members.map((member) => member.sessionId)).toEqual(["session-1", "session-2", "session-3"])
+  })
+
+  test("rolls back launched members in reverse order when a later spawn fails", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-rollback-"))
+    temporaryDirectories.push(baseDir)
+    let launchCount = 0
+    const { manager, cancelTaskMock } = createManager(baseDir, async () => {
+      launchCount += 1
+      if (launchCount === 4) throw new Error("launch-4 failed")
+      return { id: `task-${launchCount}`, sessionID: `session-${launchCount}`, status: "running" } as BackgroundTask
+    })
+
+    // when
+    const result = createTeamRun(createSpec(4), "lead-session", createContext(baseDir, manager), createConfig(baseDir), manager)
+
+    // then
+    try {
+      await result
+      throw new Error("expected createTeamRun to reject")
+    } catch (error) {
+      expect(error).toBeInstanceOf(TeamRunCreateError)
+    }
+    expect((cancelTaskMock.mock.calls as Array<[string]>).map(([taskId]) => taskId)).toEqual(["task-3", "task-2", "task-1"])
+    expect((await loadSingleRuntimeState(baseDir)).status).toBe("failed")
+  })
+
+  test("removes all created worktrees when spawn fails after worktree creation", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-worktree-"))
+    temporaryDirectories.push(baseDir)
+    let launchCount = 0
+    const { manager } = createManager(baseDir, async () => {
+      launchCount += 1
+      if (launchCount === 2) throw new Error("launch-2 failed")
+      return { id: `task-${launchCount}`, sessionID: `session-${launchCount}`, status: "running" } as BackgroundTask
+    })
+    const spec = createSpec(2, true)
+
+    // when
+    try {
+      await createTeamRun(spec, "lead-session", createContext(baseDir, manager), createConfig(baseDir), manager)
+      throw new Error("expected createTeamRun to reject")
+    } catch (error) {
+      expect(error).toBeInstanceOf(TeamRunCreateError)
+    }
+
+    // then
+    expect(await pathExists(path.resolve(baseDir, "./worktrees/member-1"))).toBe(false)
+    expect(await pathExists(path.resolve(baseDir, "./worktrees/member-2"))).toBe(false)
+  })
+
+  test("returns the existing runtime on repeated calls with the same spec and lead session", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-idempotent-"))
+    temporaryDirectories.push(baseDir)
+    let launchCount = 0
+    const { manager, launchMock } = createManager(baseDir, async () => ({ id: `task-${++launchCount}`, sessionID: `session-${launchCount}`, status: "running" } as BackgroundTask))
+    const spec = createSpec(2)
+    const context = createContext(baseDir, manager)
+
+    // when
+    const firstRuntime = await createTeamRun(spec, "lead-session", context, createConfig(baseDir), manager)
+    const secondRuntime = await createTeamRun(spec, "lead-session", context, createConfig(baseDir), manager)
+
+    // then
+    expect(firstRuntime.teamRunId).toBe(secondRuntime.teamRunId)
+    expect(launchMock).toHaveBeenCalledTimes(2)
+  })
+
+  test("never exceeds max_parallel_members while spawning", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-parallel-"))
+    temporaryDirectories.push(baseDir)
+    let inFlight = 0
+    let maxInFlight = 0
+    let launchCount = 0
+    const { manager } = createManager(baseDir, async () => {
+      launchCount += 1
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      inFlight -= 1
+      return { id: `task-${launchCount}`, sessionID: `session-${launchCount}`, status: "running" } as BackgroundTask
+    })
+
+    // when
+    await createTeamRun(createSpec(8), "lead-session", createContext(baseDir, manager), createConfig(baseDir, 4), manager)
+
+    // then
+    expect(maxInFlight).toBeLessThanOrEqual(4)
+  })
+})

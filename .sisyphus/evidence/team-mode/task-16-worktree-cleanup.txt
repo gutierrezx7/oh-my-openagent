@@ -1,0 +1,6 @@
+Scenario: Worktree creation followed by spawn failure cleans all worktrees (C-3.6)
+Command: bun test src/features/team-mode/team-runtime/create.test.ts
+Result: PASS
+Checks:
+- member-1 worktree directory removed after rollback
+- member-2 worktree directory removed after rollback

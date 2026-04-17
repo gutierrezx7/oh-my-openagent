@@ -1,0 +1,8 @@
+Scenario: 3-member category team spawns successfully (C-3.1)
+Command: bun test src/features/team-mode/team-runtime/create.test.ts
+Result: PASS
+Checks:
+- BackgroundManager.launch called 3 times
+- ctx.client.session.create called 0 times
+- runtime.status === "active"
+- all 3 runtime members received sessionId values

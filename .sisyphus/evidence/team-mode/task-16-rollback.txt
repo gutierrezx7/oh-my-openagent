@@ -1,0 +1,7 @@
+Scenario: Partial spawn fail triggers full rollback (C-3.5, D-11)
+Command: bun test src/features/team-mode/team-runtime/create.test.ts
+Result: PASS
+Checks:
+- 4th launch throws and createTeamRun rejects with TeamRunCreateError
+- BackgroundManager.cancelTask called for task-3, task-2, task-1 in reverse order
+- persisted runtime state transitions to "failed"
