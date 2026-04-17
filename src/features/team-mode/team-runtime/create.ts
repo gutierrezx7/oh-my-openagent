@@ -16,8 +16,6 @@ import { resolveMember } from "./resolve-member"
 const SESSION_ID_POLL_MS = 25
 
 type SpawnedMemberResource = {
-  memberIndex: number
-  memberName: string
   taskId?: string
   worktreePath?: string
 }
@@ -73,10 +71,6 @@ async function createMemberWorktree(memberWorktreePath: string, projectRoot: str
   return absolutePath
 }
 
-async function removeMemberWorktree(worktreePath: string): Promise<void> {
-  await rm(worktreePath, { recursive: true, force: true })
-}
-
 async function waitForTaskSessionId(bgMgr: BackgroundManager, task: BackgroundTask, deadlineAt: number): Promise<string> {
   let sessionId = task.sessionID
   while (!sessionId) {
@@ -115,7 +109,7 @@ export async function createTeamRun(
   await Promise.all(spec.members.map(async (member) => mkdir(getInboxDir(baseDir, runtimeState.teamRunId, member.name), { recursive: true })))
 
   const deadlineAt = Date.now() + (config.max_wall_clock_minutes * 60_000)
-  const resources: SpawnedMemberResource[] = spec.members.map((member, memberIndex) => ({ memberIndex, memberName: member.name }))
+  const resources: SpawnedMemberResource[] = spec.members.map(() => ({}))
   let createdLayout = false
 
   try {
@@ -204,7 +198,7 @@ export async function createTeamRun(
       }
       if (resource.worktreePath) {
         try {
-          await removeMemberWorktree(resource.worktreePath)
+          await rm(resource.worktreePath, { recursive: true, force: true })
           cleanupReport.removedWorktrees.push(resource.worktreePath)
         } catch (cleanupError) {
           cleanupReport.errors.push(`worktree ${resource.worktreePath}: ${normalizeError(cleanupError).message}`)
