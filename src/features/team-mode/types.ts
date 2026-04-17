@@ -115,9 +115,11 @@ const RuntimeBoundsSchema = z.object({
 
 const ShutdownRequestSchema = z.object({
   memberId: z.string(),
+  requesterName: z.string(),
   requestedAt: z.number().int().positive(),
   approvedAt: z.number().int().positive().optional(),
   rejectedReason: z.string().optional(),
+  rejectedAt: z.number().int().positive().optional(),
 }).strict()
 
 export const RuntimeStateSchema = z.object({

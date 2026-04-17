@@ -4,6 +4,7 @@ import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
+import { loadRuntimeState } from "../team-state-store/store"
 import { atomicWrite, withLock } from "../team-state-store/locks"
 import type { Message } from "../types"
 
@@ -37,6 +38,29 @@ export class DuplicateMessageIdError extends Error {
   constructor(message = "duplicate message id") {
     super(message)
     this.name = "DuplicateMessageIdError"
+  }
+}
+
+export class TeamDeletingError extends Error {
+  constructor(message = "team is deleting") {
+    super(message)
+    this.name = "TeamDeletingError"
+  }
+}
+
+async function assertTeamAcceptsMessages(teamRunId: string, config: TeamModeConfig): Promise<void> {
+  try {
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    if (runtimeState.status === "deleting" || runtimeState.status === "deleted") {
+      throw new TeamDeletingError()
+    }
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException
+    if (nodeError.code === "ENOENT") {
+      return
+    }
+
+    throw error
   }
 }
 
@@ -98,6 +122,8 @@ export async function sendMessage(
   if (payloadBytes > config.message_payload_max_bytes) {
     throw new PayloadTooLargeError()
   }
+
+   await assertTeamAcceptsMessages(teamRunId, config)
 
   if (message.to === "*" && !context.isLead) {
     throw new BroadcastNotPermittedError()
