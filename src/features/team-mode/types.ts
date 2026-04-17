@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { createParseMember } from "./member-parser"
 
 export const MESSAGE_KINDS = [
   "message",
@@ -180,6 +181,8 @@ export const AGENT_ELIGIBILITY_REGISTRY: Readonly<Record<string, {
   },
   "sisyphus-junior": { verdict: "eligible" },
 } as const
+
+export const parseMember = createParseMember(MemberSchema, AGENT_ELIGIBILITY_REGISTRY)
 
 export type TeamSpec = z.infer<typeof TeamSpecSchema>
 export type Member = z.infer<typeof MemberSchema>

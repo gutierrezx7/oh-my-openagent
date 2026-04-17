@@ -3,6 +3,7 @@ import {
   AGENT_ELIGIBILITY_REGISTRY,
   CategoryMemberSchema,
   MemberSchema,
+  parseMember,
   SubagentMemberSchema,
 } from "./types"
 
@@ -37,6 +38,94 @@ describe("team-mode types", () => {
 
     // then
     expect(result.success).toBe(false)
+  })
+
+  test("parseMember emits exact both kinds error", () => {
+    // given
+    const member = {
+      name: "m1",
+      kind: "category",
+      category: "deep",
+      subagent_type: "sisyphus",
+      prompt: "impl X",
+    }
+
+    // when
+    try {
+      parseMember(member)
+    } catch (error) {
+      // then
+      expect(error instanceof Error ? error.message : String(error)).toBe(
+        "Member 'm1' specifies both 'category' and 'subagent_type'. Must specify exactly one via 'kind' discriminator.",
+      )
+    }
+  })
+
+  test("parseMember emits exact missing kind error", () => {
+    // given
+    const member = { name: "m1" }
+
+    // when
+    try {
+      parseMember(member)
+    } catch (error) {
+      // then
+      expect(error instanceof Error ? error.message : String(error)).toBe(
+        "Member 'm1' missing 'kind' discriminator. Specify either {kind:'category', category, prompt} or {kind:'subagent_type', subagent_type}.",
+      )
+    }
+  })
+
+  test("parseMember emits exact category missing prompt error", () => {
+    // given
+    const member = { name: "m1", kind: "category", category: "deep" }
+
+    // when
+    try {
+      parseMember(member)
+    } catch (error) {
+      // then
+      expect(error instanceof Error ? error.message : String(error)).toBe(
+        "Member 'm1' uses category 'deep' but is missing required 'prompt' field. Category members must supply a task prompt.",
+      )
+    }
+  })
+
+  test("parseMember emits exact unknown subagent error", () => {
+    // given
+    const member = { name: "m1", kind: "subagent_type", subagent_type: "foobar" }
+
+    // when
+    try {
+      parseMember(member)
+    } catch (error) {
+      // then
+      expect(error instanceof Error ? error.message : String(error)).toBe(
+        "Unknown subagent_type 'foobar'. Available ELIGIBLE agents: sisyphus, atlas, sisyphus-junior, hephaestus (if D-36 applied). Use delegate-task for read-only agents like oracle, librarian, explore, metis, momus, multimodal-looker.",
+      )
+    }
+  })
+
+  test("parseMember returns valid category member", () => {
+    // given
+    const member = { name: "m1", kind: "category", category: "deep", prompt: "impl X" }
+
+    // when
+    const result = parseMember(member)
+
+    // then
+    expect(result).toMatchObject(member)
+  })
+
+  test("parseMember returns valid subagent member", () => {
+    // given
+    const member = { name: "m1", kind: "subagent_type", subagent_type: "sisyphus" }
+
+    // when
+    const result = parseMember(member)
+
+    // then
+    expect(result).toMatchObject(member)
   })
 
   test("category requires prompt", () => {
