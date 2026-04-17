@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 
 import { expect, test } from "bun:test"
-import { mkdir, writeFile } from "node:fs/promises"
+import { writeFile } from "node:fs/promises"
 import path from "node:path"
 
 import { getTasksDir, resolveBaseDir } from "../team-registry"
@@ -81,12 +81,11 @@ test("claimTask reaps a stale claim lock before claiming", async () => {
   // given
   const fixture = await createTasklistFixture()
 
-  try {
-    const task = await createTask(fixture.teamRunId, createTaskInput(), fixture.config)
-    const tasksDirectory = getTasksDir(resolveBaseDir(fixture.config), fixture.teamRunId)
-    const staleLockPath = path.join(tasksDirectory, "claims", `${task.id}.lock`)
-    await mkdir(staleLockPath, { recursive: true })
-    await writeFile(path.join(staleLockPath, "owner"), `member-z\n999999\n${Date.now() - 600_000}`)
+    try {
+      const task = await createTask(fixture.teamRunId, createTaskInput(), fixture.config)
+      const tasksDirectory = getTasksDir(resolveBaseDir(fixture.config), fixture.teamRunId)
+      const staleLockPath = path.join(tasksDirectory, "claims", `${task.id}.lock`)
+      await writeFile(staleLockPath, `member-z\n999999\n${Date.now() - 600_000}\n`)
 
     // when
     const claimedTask = await claimTask(fixture.teamRunId, task.id, "member-a", fixture.config)

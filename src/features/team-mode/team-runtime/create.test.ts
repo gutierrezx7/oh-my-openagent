@@ -18,14 +18,8 @@ const resolveMemberMock = mock(async (member: TeamSpec["members"][number]) => ({
   fallbackChain: undefined,
   systemContent: `system:${member.name}`,
 }))
-const createTeamLayoutMock = mock(async () => null)
-const removeTeamLayoutMock = mock(async () => undefined)
 
 mock.module("./resolve-member", () => ({ resolveMember: resolveMemberMock }))
-mock.module("../team-layout-tmux/layout", () => ({
-  createTeamLayout: createTeamLayoutMock,
-  removeTeamLayout: removeTeamLayoutMock,
-}))
 
 const { createTeamRun, TeamRunCreateError } = await import("./create")
 
@@ -94,8 +88,6 @@ describe("createTeamRun", () => {
 
   beforeEach(() => {
     resolveMemberMock.mockClear()
-    createTeamLayoutMock.mockClear()
-    removeTeamLayoutMock.mockClear()
   })
 
   afterEach(async () => {

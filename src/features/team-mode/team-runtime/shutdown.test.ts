@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { access, mkdir, rm } from "node:fs/promises"
 
 import { sendMessage } from "../team-mailbox/send"
@@ -13,25 +13,10 @@ import {
   updateMemberStatuses,
 } from "./shutdown-test-fixtures"
 
-const canVisualizeMock = mock(() => true)
-const removeTeamLayoutMock = mock(() => Promise.resolve())
-
-mock.module("../team-layout-tmux/layout", () => ({
-  canVisualize: canVisualizeMock,
-  removeTeamLayout: removeTeamLayoutMock,
-}))
-
 const { approveShutdown, deleteTeam, rejectShutdown, requestShutdownOfMember } = await import("./shutdown")
 
 describe("team-runtime shutdown", () => {
   const temporaryDirectories: string[] = []
-
-  beforeEach(() => {
-    canVisualizeMock.mockReset()
-    canVisualizeMock.mockImplementation(() => true)
-    removeTeamLayoutMock.mockClear()
-    removeTeamLayoutMock.mockImplementation(() => Promise.resolve())
-  })
 
   afterEach(async () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
@@ -149,12 +134,11 @@ describe("team-runtime shutdown", () => {
     }))
 
     // when
-    const result = await deleteTeam(fixture.teamRunId, fixture.config, {} as never)
+    const result = await deleteTeam(fixture.teamRunId, fixture.config)
 
     // then
-    expect(result.removedLayout).toBe(true)
+    expect(result.removedLayout).toBe(false)
     expect(result.removedWorktrees.sort()).toEqual([...fixture.worktreePaths].sort())
-    expect(removeTeamLayoutMock).toHaveBeenCalledWith(fixture.teamRunId, {})
     await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
       await expect(access(worktreePath)).rejects.toThrow()
     }))

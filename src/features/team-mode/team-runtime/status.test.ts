@@ -1,130 +1,118 @@
-import { describe, expect, mock, test } from "bun:test"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { afterEach, describe, expect, test } from "bun:test"
+import { randomUUID } from "node:crypto"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 
-let loadRuntimeStateImplementation: typeof import("../team-state-store/store").loadRuntimeState = async () => {
-  throw new Error("loadRuntimeStateImplementation not set")
-}
-
-let listUnreadMessagesImplementation: typeof import("../team-mailbox/inbox").listUnreadMessages = async () => {
-  throw new Error("listUnreadMessagesImplementation not set")
-}
-
-let listTasksImplementation: typeof import("../team-tasklist/list").listTasks = async () => {
-  throw new Error("listTasksImplementation not set")
-}
-
-mock.module("../team-state-store/store", () => ({
-  loadRuntimeState: (...args: Parameters<typeof loadRuntimeStateImplementation>) => loadRuntimeStateImplementation(...args),
-}))
-
-mock.module("../team-mailbox/inbox", () => ({
-  listUnreadMessages: (...args: Parameters<typeof listUnreadMessagesImplementation>) => listUnreadMessagesImplementation(...args),
-}))
-
-mock.module("../team-tasklist/list", () => ({
-  listTasks: (...args: Parameters<typeof listTasksImplementation>) => listTasksImplementation(...args),
-}))
-
 import type { BackgroundManager } from "../../background-agent/manager"
+import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import { createTask } from "../team-tasklist/store"
+import { createTaskInput } from "../team-tasklist/test-support"
+import { getInboxDir, getTasksDir, resolveBaseDir } from "../team-registry/paths"
+import { createRuntimeState, saveRuntimeState } from "../team-state-store/store"
 import { aggregateStatus } from "./status"
-import { loadRuntimeState } from "../team-state-store/store"
-import { listUnreadMessages } from "../team-mailbox/inbox"
-import { listTasks } from "../team-tasklist/list"
 
-void loadRuntimeState
-void listUnreadMessages
-void listTasks
+async function createTemporaryBaseDir(): Promise<string> {
+  return await mkdtemp(path.join(tmpdir(), "team-mode-status-"))
+}
+
+function createConfig(baseDir: string): TeamModeConfig {
+  return TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+}
+
+async function seedRuntimeState(baseDir: string, teamName: string, leadSessionId: string, memberSessionIds: string[]): Promise<string> {
+  const config = createConfig(baseDir)
+  const runtimeState = await createRuntimeState(
+    {
+      version: 1,
+      name: teamName,
+      createdAt: Date.now(),
+      leadAgentId: "lead",
+      members: [
+        { kind: "subagent_type", name: "lead", subagent_type: "sisyphus", backendType: "in-process", isActive: true, color: "red" },
+        ...memberSessionIds.map((sessionID, index) => ({
+          kind: "category" as const,
+          name: `member-${index + 1}`,
+          category: "deep" as const,
+          prompt: "implement task",
+          backendType: "in-process" as const,
+          isActive: true,
+          color: index === 0 ? "blue" : "green",
+        })),
+      ],
+    },
+    leadSessionId,
+    "project",
+    config,
+  )
+  const updatedRuntimeState = {
+    ...runtimeState,
+    members: runtimeState.members.map((member, index) => index === 0 ? { ...member, sessionId: leadSessionId, status: "running" as const } : { ...member, sessionId: memberSessionIds[index - 1], status: "running" as const }),
+  }
+  await saveRuntimeState(updatedRuntimeState, config)
+  return updatedRuntimeState.teamRunId
+}
 
 describe("aggregateStatus", () => {
+  const temporaryDirectories: string[] = []
+
+  afterEach(async () => {
+    await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
+  })
+
   test("surfaces stale locks from claims directory", async () => {
     // given
-    const baseDir = "/tmp/team-mode-status-stale-lock"
-    const claimsDir = path.join(baseDir, "runtime", "team-run-3", "tasks", "claims")
-    await rm(baseDir, { force: true, recursive: true })
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const teamRunId = await seedRuntimeState(baseDir, "team-gamma", "lead-3", [])
+    const claimsDir = path.join(getTasksDir(resolveBaseDir(config), teamRunId), "claims")
     await mkdir(claimsDir, { recursive: true })
-    await writeFile(path.join(claimsDir, "task-claimed.lock"), "owner\n999999\n1\n")
-    const config = { base_dir: baseDir } satisfies TeamModeConfig
-    loadRuntimeStateImplementation = async () => ({
-      version: 1,
-      teamRunId: "team-run-3",
-      teamName: "team-gamma",
-      specSource: "project",
-      createdAt: 123,
-      status: "active",
-      leadSessionId: "lead-3",
-      members: [],
-      shutdownRequests: [],
-      bounds: { maxMembers: 8, maxParallelMembers: 4, maxMessagesPerRun: 10000, maxWallClockMinutes: 120, maxMemberTurns: 500 },
-    })
-    listUnreadMessagesImplementation = async () => []
-    listTasksImplementation = async () => [
-      { version: 1, id: "task-claimed", subject: "a", description: "a", status: "claimed", createdAt: 1, updatedAt: 1, blocks: [], blockedBy: [] },
-    ]
+    const claimedTask = await createTask(teamRunId, createTaskInput(), config)
+    await writeFile(path.join(claimsDir, `${claimedTask.id}.lock`), "owner\n999999\n1\n")
 
     // when
-    const result = await aggregateStatus("team-run-3", config)
+    const result = await aggregateStatus(teamRunId, config)
 
     // then
-    expect(result.staleLocks).toEqual([path.join(claimsDir, "task-claimed.lock")])
+    expect(result.staleLocks).toEqual([path.join(claimsDir, `${claimedTask.id}.lock`)])
   })
 
   test("aggregates members plus tasks plus unread counts", async () => {
     // given
-    const config = { base_dir: "/tmp/team-mode" } satisfies TeamModeConfig
-    loadRuntimeStateImplementation = async () => ({
-      version: 1,
-      teamRunId: "team-run-1",
-      teamName: "team-alpha",
-      specSource: "project",
-      createdAt: 123,
-      status: "active",
-      leadSessionId: "lead-1",
-      members: [
-        { name: "member-a", agentType: "general-purpose", status: "running", color: "red", worktreePath: "/work/a", sessionId: "session-a", tmuxPaneId: "1", lastInjectedTurnMarker: undefined, pendingInjectedMessageIds: [] },
-        { name: "member-b", agentType: "general-purpose", status: "idle", color: "blue", worktreePath: "/work/b", sessionId: "session-b", tmuxPaneId: "2", lastInjectedTurnMarker: undefined, pendingInjectedMessageIds: [] },
-      ],
-      shutdownRequests: [],
-      bounds: { maxMembers: 8, maxParallelMembers: 4, maxMessagesPerRun: 10000, maxWallClockMinutes: 120, maxMemberTurns: 500 },
-    })
-    listUnreadMessagesImplementation = async (_teamRunId, memberName) => memberName === "member-a" ? [{ id: "1" }, { id: "2" }] : []
-    listTasksImplementation = async () => [
-      { version: 1, id: "task-1", subject: "a", description: "a", status: "pending", createdAt: 1, updatedAt: 1, blocks: [], blockedBy: [] },
-      { version: 1, id: "task-2", subject: "b", description: "b", status: "pending", createdAt: 1, updatedAt: 1, blocks: [], blockedBy: [] },
-      { version: 1, id: "task-3", subject: "c", description: "c", status: "pending", createdAt: 1, updatedAt: 1, blocks: [], blockedBy: [] },
-      { version: 1, id: "task-4", subject: "d", description: "d", status: "completed", createdAt: 1, updatedAt: 1, blocks: [], blockedBy: [] },
-    ]
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const teamRunId = await seedRuntimeState(baseDir, "team-alpha", "lead-1", ["session-a", "session-b"])
+    const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "member-1")
+    await mkdir(inboxDir, { recursive: true })
+    await writeFile(path.join(inboxDir, "1.json"), JSON.stringify({ version: 1, messageId: randomUUID(), from: "lead", to: "member-1", kind: "message", body: "a", timestamp: 1 }) + "\n")
+    await writeFile(path.join(inboxDir, "2.json"), JSON.stringify({ version: 1, messageId: randomUUID(), from: "lead", to: "member-1", kind: "message", body: "b", timestamp: 2 }) + "\n")
+    await createTask(teamRunId, createTaskInput({ subject: "a" }), config)
+    await createTask(teamRunId, createTaskInput({ subject: "b" }), config)
+    await createTask(teamRunId, createTaskInput({ subject: "c" }), config)
+    await createTask(teamRunId, createTaskInput({ subject: "d" }), config)
 
     // when
-    const result = await aggregateStatus("team-run-1", config)
+    const result = await aggregateStatus(teamRunId, config)
 
     // then
     expect(result.teamName).toBe("team-alpha")
     expect(result.members).toEqual([
-      expect.objectContaining({ name: "member-a", unreadMessages: 2 }),
-      expect.objectContaining({ name: "member-b", unreadMessages: 0 }),
+      expect.objectContaining({ name: "lead", unreadMessages: 0 }),
+      expect.objectContaining({ name: "member-1", unreadMessages: 2 }),
+      expect.objectContaining({ name: "member-2", unreadMessages: 0 }),
     ])
-    expect(result.tasks).toEqual({ pending: 3, claimed: 0, in_progress: 0, completed: 1, deleted: 0, total: 4 })
+    expect(result.tasks).toEqual({ pending: 4, claimed: 0, in_progress: 0, completed: 0, deleted: 0, total: 4 })
   })
 
   test("surfaces queued and running counts on same model", async () => {
     // given
-    const config = { base_dir: "/tmp/team-mode" } satisfies TeamModeConfig
-    loadRuntimeStateImplementation = async () => ({
-      version: 1,
-      teamRunId: "team-run-2",
-      teamName: "team-beta",
-      specSource: "project",
-      createdAt: 123,
-      status: "active",
-      leadSessionId: "lead-2",
-      members: [],
-      shutdownRequests: [],
-      bounds: { maxMembers: 8, maxParallelMembers: 4, maxMessagesPerRun: 10000, maxWallClockMinutes: 120, maxMemberTurns: 500 },
-    })
-    listUnreadMessagesImplementation = async () => []
-    listTasksImplementation = async () => []
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const teamRunId = await seedRuntimeState(baseDir, "team-beta", "lead-2", [])
     const backgroundManager = {
       getTasksByParentSession: () => [
         { status: "running", model: { providerID: "anthropic", modelID: "claude-opus-4-7" } },
@@ -144,7 +132,7 @@ describe("aggregateStatus", () => {
     }
 
     // when
-    const result = await aggregateStatus("team-run-2", config, backgroundManager)
+    const result = await aggregateStatus(teamRunId, config, backgroundManager)
 
     // then
     expect(result.concurrency.runningOnSameModel).toBe(5)

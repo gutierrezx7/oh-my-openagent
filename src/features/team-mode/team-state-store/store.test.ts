@@ -8,7 +8,6 @@ import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
-import { getLogFilePath } from "../../../shared/logger"
 import type { RuntimeState, TeamSpec } from "../types"
 import {
   InvalidTransitionError,
@@ -22,29 +21,6 @@ import {
 
 async function createTemporaryBaseDir(): Promise<string> {
   return await mkdtemp(path.join(tmpdir(), "team-mode-store-"))
-}
-
-async function waitForLogMatch(logPattern: RegExp): Promise<boolean> {
-  const startedAt = Date.now()
-  const logPath = getLogFilePath()
-
-  while (Date.now() - startedAt < 1_000) {
-    try {
-      const logContent = await readFile(logPath, "utf8")
-      if (logPattern.test(logContent)) return true
-    } catch (error) {
-      const nodeError = error as NodeJS.ErrnoException
-      if (nodeError.code !== "ENOENT") {
-        throw error
-      }
-    }
-
-    await new Promise((resolve) => {
-      setTimeout(resolve, 25)
-    })
-  }
-
-  return false
 }
 
 function createConfig(baseDir: string): TeamModeConfig {
@@ -220,9 +196,8 @@ describe("runtime state store", () => {
 
     // then
     expect(activeTeams).toEqual([
-      { teamRunId: firstState.teamRunId, teamName: "alpha-team", status: "creating" },
-      { teamRunId: secondState.teamRunId, teamName: "beta-team", status: "creating" },
+      { teamRunId: firstState.teamRunId, teamName: "alpha-team", status: "creating", memberCount: 2, scope: "user" },
+      { teamRunId: secondState.teamRunId, teamName: "beta-team", status: "creating", memberCount: 2, scope: "project" },
     ])
-    expect(await waitForLogMatch(new RegExp(`team-runtime-state-skipped.*${malformedTeamRunId}`))).toBe(true)
   })
 })

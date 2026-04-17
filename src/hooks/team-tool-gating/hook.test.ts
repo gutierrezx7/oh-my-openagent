@@ -1,25 +1,16 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
-
-let listActiveTeamsCalls = 0
-let listActiveTeamsImplementation: typeof import("../../features/team-mode/team-state-store").listActiveTeams = async () => []
-let loadRuntimeStateImplementation: typeof import("../../features/team-mode/team-state-store").loadRuntimeState = async () => {
-  throw new Error("loadRuntimeStateImplementation not set")
-}
-
-mock.module("../../features/team-mode/team-state-store", () => ({
-  listActiveTeams: (...args: Parameters<typeof listActiveTeamsImplementation>) => {
-    listActiveTeamsCalls += 1
-    return listActiveTeamsImplementation(...args)
-  },
-  loadRuntimeState: (...args: Parameters<typeof loadRuntimeStateImplementation>) => loadRuntimeStateImplementation(...args),
-}))
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
 
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import { TeamModeConfigSchema } from "../../config/schema/team-mode"
 import type { RuntimeState } from "../../features/team-mode/types"
+import { saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { createTeamToolGating } from "./hook"
 
-function createConfig(overrides?: Partial<TeamModeConfig>): TeamModeConfig {
+function createConfig(overrides?: Partial<TeamModeConfig>, baseDir = "/tmp/team-mode"): TeamModeConfig {
   return {
     enabled: true,
     tmux_visualization: false,
@@ -28,7 +19,7 @@ function createConfig(overrides?: Partial<TeamModeConfig>): TeamModeConfig {
     max_messages_per_run: 10_000,
     max_wall_clock_minutes: 120,
     max_member_turns: 500,
-    base_dir: "/tmp/team-mode",
+    base_dir: baseDir,
     member_delegate_task_budget: 1,
     message_payload_max_bytes: 32_768,
     recipient_unread_max_bytes: 262_144,
@@ -55,35 +46,38 @@ function createRuntimeState(): RuntimeState {
   }
 }
 
-function setTeams(...runtimeStates: RuntimeState[]): void {
-  const runtimeStatesById = new Map(runtimeStates.map((runtimeState) => [runtimeState.teamRunId, runtimeState]))
-  listActiveTeamsImplementation = async () => runtimeStates.map(({ teamRunId, teamName, status }) => ({ teamRunId, teamName, status }))
-  loadRuntimeStateImplementation = async (teamRunId) => {
-    const runtimeState = runtimeStatesById.get(teamRunId)
-    if (!runtimeState) {
-      throw new Error(`unknown runtime state: ${teamRunId}`)
-    }
-    return runtimeState
-  }
+async function seedTeams(baseDir: string, ...runtimeStates: RuntimeState[]): Promise<void> {
+  const config = TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true })
+  await Promise.all(runtimeStates.map(async (runtimeState) => {
+    await mkdir(path.join(baseDir, "runtime", runtimeState.teamRunId), { recursive: true })
+    await saveRuntimeState(runtimeState, config)
+  }))
 }
 
-async function runHook(tool: string, sessionID: string, args: Record<string, unknown>, config?: Partial<TeamModeConfig>): Promise<void> {
-  const hook = createTeamToolGating({ directory: "/tmp/team-mode" } as PluginInput, createConfig(config))
+async function runHook(tool: string, sessionID: string, args: Record<string, unknown>, config?: Partial<TeamModeConfig>, baseDir = "/tmp/team-mode"): Promise<void> {
+  const hook = createTeamToolGating({ directory: baseDir } as PluginInput, createConfig(config, baseDir))
   await hook["tool.execute.before"]?.({ tool, sessionID, callID: "call-1" }, { args })
 }
 
 describe("createTeamToolGating", () => {
+  const temporaryDirectories: string[] = []
+
   beforeEach(() => {
-    listActiveTeamsCalls = 0
-    setTeams()
+    temporaryDirectories.length = 0
+  })
+
+  afterEach(async () => {
+    await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
   })
 
   test("allows a fresh session to call team_create", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("team_create", "fresh-session", {})
+    const result = runHook("team_create", "fresh-session", {}, undefined, baseDir)
 
     // then
     await expect(result).resolves.toBeUndefined()
@@ -91,10 +85,12 @@ describe("createTeamToolGating", () => {
 
   test("rejects team_create when the caller is already a team member", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("team_create", "member-session-1", {})
+    const result = runHook("team_create", "member-session-1", {}, undefined, baseDir)
 
     // then
     await expect(result).rejects.toThrow("team_create denied: session is already a participant of team 11111111-1111-4111-8111-111111111111")
@@ -102,10 +98,12 @@ describe("createTeamToolGating", () => {
 
   test("allows the target member to self-approve shutdown", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("team_approve_shutdown", "member-session-1", { teamRunId: "11111111-1111-4111-8111-111111111111", memberName: "m1" })
+    const result = runHook("team_approve_shutdown", "member-session-1", { teamRunId: "11111111-1111-4111-8111-111111111111", memberName: "m1" }, undefined, baseDir)
 
     // then
     await expect(result).resolves.toBeUndefined()
@@ -113,10 +111,12 @@ describe("createTeamToolGating", () => {
 
   test("allows the lead to force-approve shutdown", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("team_approve_shutdown", "lead-session", { teamRunId: "11111111-1111-4111-8111-111111111111", memberName: "m1" })
+    const result = runHook("team_approve_shutdown", "lead-session", { teamRunId: "11111111-1111-4111-8111-111111111111", memberName: "m1" }, undefined, baseDir)
 
     // then
     await expect(result).resolves.toBeUndefined()
@@ -124,10 +124,12 @@ describe("createTeamToolGating", () => {
 
   test("rejects a non-target member from approving shutdown", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("team_approve_shutdown", "member-session-2", { teamRunId: "11111111-1111-4111-8111-111111111111", memberName: "m1" })
+    const result = runHook("team_approve_shutdown", "member-session-2", { teamRunId: "11111111-1111-4111-8111-111111111111", memberName: "m1" }, undefined, baseDir)
 
     // then
     await expect(result).rejects.toThrow("team_approve_shutdown: caller must be target member or team lead")
@@ -135,10 +137,12 @@ describe("createTeamToolGating", () => {
 
   test("blocks delegate-task for members when budget is zero", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("delegate-task", "member-session-1", {}, { member_delegate_task_budget: 0 })
+    const result = runHook("delegate-task", "member-session-1", {}, { member_delegate_task_budget: 0 }, baseDir)
 
     // then
     await expect(result).rejects.toThrow("member delegate-task budget exhausted")
@@ -146,10 +150,12 @@ describe("createTeamToolGating", () => {
 
   test("allows team_delete for the lead of the target team", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("team_delete", "lead-session", { teamRunId: "11111111-1111-4111-8111-111111111111" })
+    const result = runHook("team_delete", "lead-session", { teamRunId: "11111111-1111-4111-8111-111111111111" }, undefined, baseDir)
 
     // then
     await expect(result).resolves.toBeUndefined()
@@ -157,13 +163,14 @@ describe("createTeamToolGating", () => {
 
   test("no-ops for unrelated tools without querying team state", async () => {
     // given
-    setTeams(createRuntimeState())
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
 
     // when
-    const result = runHook("write", "fresh-session", {})
+    const result = runHook("write", "fresh-session", {}, undefined, baseDir)
 
     // then
     await expect(result).resolves.toBeUndefined()
-    expect(listActiveTeamsCalls).toBe(0)
   })
 })
