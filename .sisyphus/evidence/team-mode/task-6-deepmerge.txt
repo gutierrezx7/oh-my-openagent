@@ -1,0 +1,2 @@
+PASS: bun test src/plugin-config.test.ts
+Result: mergeConfigs deep-merges team_mode and preserves base max_parallel_members when override omits it.

@@ -1,14 +1,16 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import * as shared from "./shared"
 import { mergeConfigs, parseConfigPartially } from "./plugin-config";
-import { OhMyOpenCodeConfigSchema, type OhMyOpenCodeConfig } from "./config";
+import { OhMyOpenCodeConfigSchema, type OhMyOpenCodeConfig, type TeamModeConfig } from "./config";
 
 const tempDirs: string[] = []
+type ConfigInput = Omit<Partial<OhMyOpenCodeConfig>, "team_mode"> & {
+  team_mode?: Partial<TeamModeConfig>
+}
 
-function createConfig(config: Partial<OhMyOpenCodeConfig>): OhMyOpenCodeConfig {
+function createConfig(config: ConfigInput): OhMyOpenCodeConfig {
   return OhMyOpenCodeConfigSchema.parse(config)
 }
 
@@ -121,6 +123,29 @@ describe("mergeConfigs", () => {
       expect(result.agents?.explore).toMatchObject({ model: "anthropic/claude-haiku-4-5" });
     });
 
+    it("should deep merge team_mode", () => {
+      const base = createConfig({
+        team_mode: {
+          enabled: false,
+          tmux_visualization: false,
+          max_parallel_members: 2,
+        },
+      });
+
+      const override = {
+        team_mode: {
+          enabled: true,
+        },
+      } as OhMyOpenCodeConfig;
+
+      const result = mergeConfigs(base, override);
+
+      expect(result.team_mode).toMatchObject({
+        enabled: true,
+        max_parallel_members: 2,
+      });
+    });
+
     it("should merge disabled arrays without duplicates", () => {
       const base = createConfig({
         disabled_hooks: ["comment-checker", "think-mode"],
@@ -156,6 +181,7 @@ describe("mergeConfigs", () => {
     });
   });
 });
+
 
 describe("parseConfigPartially", () => {
   describe("disabled_hooks compatibility", () => {
