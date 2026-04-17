@@ -1,6 +1,0 @@
-Scenario: max_parallel_members bound is respected (D-25)
-Command: bun test src/features/team-mode/team-runtime/create.test.ts
-Result: PASS
-Checks:
-- 8-member spawn completed with max_parallel_members=4
-- observed in-flight launch count never exceeded 4

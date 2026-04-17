@@ -1,8 +1,0 @@
-Scenario: buildSystemContent reused (D-44)
-Command: bun test src/features/team-mode/team-runtime/resolve-member.test.ts
-Result: PASS
-Checks:
-- buildSystemContent called once per resolution kind
-- category call received categoryPromptAppend/maxPromptTokens/model metadata
-- subagent call received agentName/model metadata
-- resolve-member.ts contains buildSystemContent(...) and no custom prompt concatenation checks fail

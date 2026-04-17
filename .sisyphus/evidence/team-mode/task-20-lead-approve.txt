@@ -1,3 +1,0 @@
-Target: src/hooks/team-tool-gating/hook.ts
-Test: bun test src/hooks/team-tool-gating/
-Result: pass (lead can force-approve shutdown)

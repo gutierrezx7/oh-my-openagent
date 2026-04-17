@@ -1,2 +1,0 @@
-PASS: `bun test src/features/team-mode/team-state-store/`
-Scenario: transitionRuntimeState allowed `creating -> active -> shutdown_requested` and persisted the final status.

@@ -1,2 +1,0 @@
-PASS: `bun test src/features/team-mode/team-state-store/`
-Scenario: transitionRuntimeState rejected `deleted -> active` with InvalidTransitionError.

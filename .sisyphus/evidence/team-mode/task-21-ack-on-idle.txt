@@ -1,4 +1,0 @@
-Scenario: Ack-on-idle moves pending injected messages to processed/
-Result: PASS
-Evidence: bun test src/hooks/team-session-events/team-idle-wake-hint.test.ts
-Assertion: ackMessages is called with pending ids, files move into processed/, and pendingInjectedMessageIds clears.

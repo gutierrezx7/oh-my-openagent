@@ -1,4 +1,0 @@
-Scenario: Member session.error -> member.errored
-Result: PASS
-Evidence: bun test src/hooks/team-session-events/team-member-error-handler.test.ts
-Assertion: matched member status becomes errored while runtime.status remains active.

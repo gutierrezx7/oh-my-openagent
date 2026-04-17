@@ -1,3 +1,0 @@
-Target: src/features/team-mode/team-runtime/status.ts
-Scenario: queued on same model surfaced
-Result: pass

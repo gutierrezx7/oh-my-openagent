@@ -1,1 +1,0 @@
-PASS: tmux command failure returned null without throwing.

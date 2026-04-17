@@ -1,4 +1,0 @@
-Scenario: C-4.2 payload cap
-Verification: send.test.ts :: rejects payloads larger than 32 KB
-Result: PASS
-Observed: sendMessage rejected a multi-byte body whose UTF-8 byte size exceeded message_payload_max_bytes with PayloadTooLargeError.

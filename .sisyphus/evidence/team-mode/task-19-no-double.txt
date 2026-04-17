@@ -1,4 +1,0 @@
-Scenario: C-4.7 replay same turn does not double-inject
-Verification: hook.test.ts :: does not inject twice for the same turn marker
-Result: PASS
-Observed: first call injected content, second call with the same sessionID and turn marker left messages unchanged after pollAndBuildInjection returned injected=false.

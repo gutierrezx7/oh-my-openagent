@@ -1,6 +1,0 @@
-Scenario: Repeated createTeamRun call is idempotent (D-10)
-Command: bun test src/features/team-mode/team-runtime/create.test.ts
-Result: PASS
-Checks:
-- second createTeamRun call returned the existing teamRunId
-- no extra BackgroundManager.launch calls were made on the second invocation

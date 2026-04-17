@@ -1,2 +1,0 @@
-PASS: bun test src/config/schema/oh-my-opencode-config.test.ts
-Result: OhMyOpenCodeConfigSchema allows omitting team_mode.

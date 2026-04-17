@@ -1,4 +1,0 @@
-Scenario: Injector no-op for non-member session
-Verification: hook.test.ts :: returns the input unchanged for a non-member session
-Result: PASS
-Observed: non-member sessions returned the original messages array content and never called pollAndBuildInjection.

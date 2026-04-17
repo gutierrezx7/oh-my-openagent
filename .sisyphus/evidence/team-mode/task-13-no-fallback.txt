@@ -1,7 +1,0 @@
-Scenario: No fallback on failure (D-43)
-Command: bun test src/features/team-mode/team-runtime/resolve-member.test.ts
-Result: PASS
-Checks:
-- resolveMember throws TeamMemberResolutionError on subagent resolution failure
-- resolveCategoryExecution is not called
-- no subagent_type -> category fallback path exists
