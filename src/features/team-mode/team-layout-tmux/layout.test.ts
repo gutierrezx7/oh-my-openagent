@@ -75,8 +75,8 @@ describe("team-layout-tmux", () => {
     expect(commands.flat()).toContain("send-keys")
     expect(commands).toContainEqual(["new-window", "-d", "-P", "-F", "#{window_id} #{pane_id}", "-t", "omo-team-run-2", "-n", "focus", "-c", "/tmp/lead"])
     expect(commands).toContainEqual(["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", "@2", "-c", "/tmp/m2"])
-    expect(commands).toContainEqual(["send-keys", "-t", "%1", "tail -f '/tmp/omo-team/run-2/lead.fifo'", "Enter"])
-    expect(commands).toContainEqual(["send-keys", "-t", "%3", "tail -f '/tmp/omo-team/run-2/m3.fifo'", "Enter"])
+expect(commands).toContainEqual(["send-keys", "-t", "%1", "tail -n +1 -f '/tmp/omo-team/run-2/lead.fifo'", "Enter"])
+expect(commands).toContainEqual(["send-keys", "-t", "%3", "tail -n +1 -f '/tmp/omo-team/run-2/m3.fifo'", "Enter"])
     expect(ensureTeamMemberFifoMock).toHaveBeenCalledTimes(3)
     expect(result?.fifoByMember).toEqual({
       lead: "/tmp/omo-team/run-2/lead.fifo",

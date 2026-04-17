@@ -76,4 +76,23 @@ describe("writeTeamSessionFifo", () => {
     const content = await readFile(streamPath, "utf8")
     expect(content).toBe("")
   })
+
+  test("re-invoking ensureTeamMemberFifo preserves content already written (late reader race guard)", async () => {
+    // given
+    const scratchDir = await mkdtemp(path.join(tmpdir(), "team-stream-"))
+    registeredPaths.push(scratchDir)
+    const teamRunId = `qa-late-race-${path.basename(scratchDir)}`
+    registeredPaths.push(path.join(TEAM_ROOT, teamRunId))
+    const streamPath = await ensureTeamMemberFifo(teamRunId, "member-d")
+    await writeTeamSessionFifo(streamPath, "early-line-1\nearly-line-2\n")
+
+    // when
+    const streamPathAgain = await ensureTeamMemberFifo(teamRunId, "member-d")
+    await writeTeamSessionFifo(streamPath, "late-line-3\n")
+
+    // then
+    expect(streamPathAgain).toBe(streamPath)
+    const content = await readFile(streamPath, "utf8")
+    expect(content).toBe("early-line-1\nearly-line-2\nlate-line-3\n")
+  })
 })

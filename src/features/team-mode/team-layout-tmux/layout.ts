@@ -80,7 +80,7 @@ async function createWindow(
     if (!(await runTmuxCommand(tmuxPath, ["select-pane", "-t", paneId, "-T", member.name])).success) return null
     await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-status", "top"])
     await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-format", "#{pane_title}"])
-    await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, `tail -f ${quoteShellArgument(fifoPath)}`, "Enter"])
+    await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, `tail -n +1 -f ${quoteShellArgument(fifoPath)}`, "Enter"])
   }
 
   return { windowId, panesByMember }
