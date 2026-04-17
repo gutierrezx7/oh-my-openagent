@@ -168,4 +168,94 @@ describe("createTeamSessionStreamer", () => {
     // then
     expect(writeTeamSessionFifoMock).not.toHaveBeenCalled()
   })
+
+  test("does not duplicate output when message.part.delta precedes message.part.updated for the same part", async () => {
+    // given
+    const listActiveTeams = mock(async () => [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active",
+      memberCount: 1,
+      scope: "project" as const,
+    }])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "member-session",
+          partID: "part-mixed",
+          field: "text",
+          delta: "hello",
+        },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-mixed",
+            sessionID: "member-session",
+            messageID: "message-x",
+            type: "text",
+            text: "hello world",
+          },
+        },
+      },
+    })
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(2)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "hello")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", " world")
+  })
+
+  test("drops delta events that carry no partID (rely on later cumulative updated to replay)", async () => {
+    // given
+    const listActiveTeams = mock(async () => [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active",
+      memberCount: 1,
+      scope: "project" as const,
+    }])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "member-session",
+          field: "text",
+          delta: "orphan",
+        },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-cumulative",
+            sessionID: "member-session",
+            messageID: "message-y",
+            type: "text",
+            text: "orphan full",
+          },
+        },
+      },
+    })
+
+    // then
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "orphan full")
+  })
 })

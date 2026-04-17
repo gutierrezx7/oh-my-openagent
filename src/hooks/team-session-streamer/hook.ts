@@ -45,18 +45,10 @@ function extractUpdateSegment(
   partTextByKey: Map<string, string>,
 ): { sessionID: string; text: string } | undefined {
   const part = event.properties.part
-  const delta = event.properties.delta
-  const partKey = `${part.sessionID}:${part.id}`
-
-  if (typeof delta === "string" && delta.length > 0) {
-    const previousText = partTextByKey.get(partKey) ?? ""
-    partTextByKey.set(partKey, previousText + delta)
-    return { sessionID: part.sessionID, text: delta }
-  }
-
   const cumulativeText = extractCumulativeText(part)
   if (cumulativeText === undefined) return undefined
 
+  const partKey = `${part.sessionID}:${part.id}`
   const previousText = partTextByKey.get(partKey) ?? ""
   partTextByKey.set(partKey, cumulativeText)
 
@@ -74,13 +66,11 @@ function extractDeltaSegment(
   const { sessionID, partID, field, delta } = event.properties
   if (typeof delta !== "string" || delta.length === 0) return undefined
   if (field !== undefined && field !== "text" && field !== "content") return undefined
+  if (!partID) return undefined
 
-  if (partID) {
-    const partKey = `${sessionID}:${partID}`
-    const previousText = partTextByKey.get(partKey) ?? ""
-    partTextByKey.set(partKey, previousText + delta)
-  }
-
+  const partKey = `${sessionID}:${partID}`
+  const previousText = partTextByKey.get(partKey) ?? ""
+  partTextByKey.set(partKey, previousText + delta)
   return { sessionID, text: delta }
 }
 
@@ -127,10 +117,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     return undefined
   }
 
-  async function writeSegment(
-    sessionID: string,
-    text: string,
-  ): Promise<void> {
+  async function writeSegment(sessionID: string, text: string): Promise<void> {
     const target = await resolveStreamTarget(sessionID)
     if (!target) return
 
