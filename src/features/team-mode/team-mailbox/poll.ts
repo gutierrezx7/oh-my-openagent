@@ -50,12 +50,12 @@ export async function pollAndBuildInjection(
 ): Promise<InjectionResult> {
   const runtimeState = await loadRuntimeState(teamRunId, config)
   const runtimeMember = runtimeState.members.find((member) => member.name === memberName)
-  if (runtimeMember?.lastInjectedTurnMarker === turnMarker) {
-    return { injected: false, messageIds: [], reason: "already injected this turn" }
-  }
-
   if (runtimeMember === undefined) {
     throw new Error(`runtime member not found for session ${sessionID}: ${memberName}`)
+  }
+
+  if (runtimeMember.lastInjectedTurnMarker === turnMarker) {
+    return { injected: false, messageIds: [], reason: "already injected this turn" }
   }
 
   const unreadMessages = await listUnreadMessages(teamRunId, memberName, config)
@@ -63,8 +63,13 @@ export async function pollAndBuildInjection(
     return { injected: false, messageIds: [], reason: "no unread" }
   }
 
-  const messageIds = unreadMessages.map((message) => message.messageId)
-  const content = unreadMessages.map(buildEnvelope).join("\n")
+  const messageIds: string[] = []
+  const envelopes: string[] = []
+  for (const unreadMessage of unreadMessages) {
+    messageIds.push(unreadMessage.messageId)
+    envelopes.push(buildEnvelope(unreadMessage))
+  }
+  const content = envelopes.join("\n")
 
   await transitionRuntimeState(teamRunId, (currentRuntimeState) => ({
     ...currentRuntimeState,
