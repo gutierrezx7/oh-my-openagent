@@ -1,0 +1,38 @@
+export type PendingRetryScheduler = {
+  schedule: () => void
+  stop: () => void
+}
+
+export type PendingRetrySchedulerOptions = {
+  intervalMs: number
+  getPendingSessions: () => string[]
+  drainSession: (sessionID: string) => Promise<void>
+}
+
+export function createPendingRetryScheduler(options: PendingRetrySchedulerOptions): PendingRetryScheduler {
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  async function run(): Promise<void> {
+    timer = undefined
+    const sessions = options.getPendingSessions()
+    for (const sessionID of sessions) {
+      await options.drainSession(sessionID)
+    }
+    if (options.getPendingSessions().length > 0) schedule()
+  }
+
+  function schedule(): void {
+    if (timer) return
+    timer = setTimeout(() => {
+      void run()
+    }, options.intervalMs)
+  }
+
+  function stop(): void {
+    if (!timer) return
+    clearTimeout(timer)
+    timer = undefined
+  }
+
+  return { schedule, stop }
+}

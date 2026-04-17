@@ -8,6 +8,7 @@ import { clearSessionPartState, previewPendingEvent } from "./apply-pending-even
 import { type MessagePartDeltaEvent, normalizeDeltaEventForBuffer, normalizeUpdateEventForBuffer } from "./event-normalizer"
 import { writeTeamSessionFifo } from "./fifo-writer"
 import { createPendingDeltaBuffer, type PendingStreamEvent } from "./pending-delta-buffer"
+import { createPendingRetryScheduler } from "./pending-retry-scheduler"
 
 type TeamStateStore = Pick<typeof teamStateStore, "listActiveTeams" | "loadRuntimeState">
 
@@ -33,7 +34,6 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   const streamTargetsBySession = new Map<string, TeamSessionStreamTarget>()
   const partTextByKey = new Map<string, string>()
   const pendingDeltaBuffer = createPendingDeltaBuffer()
-  let pendingRetryTimer: ReturnType<typeof setTimeout> | undefined
 
   async function resolveStreamTarget(sessionID: string): Promise<TeamSessionStreamTarget | undefined> {
     const cachedTarget = streamTargetsBySession.get(sessionID)
@@ -103,35 +103,39 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     return written
   }
 
-  async function flushPending(target: TeamSessionStreamTarget, sessionID: string): Promise<void> {
+  async function drainAndWrite(target: TeamSessionStreamTarget, sessionID: string): Promise<boolean> {
     const drained = pendingDeltaBuffer.drain(sessionID)
-    for (const pending of drained) {
-      const written = await writePendingEvent(target, sessionID, pending)
-      if (!written) break
+    for (let i = 0; i < drained.length; i++) {
+      const written = await writePendingEvent(target, sessionID, drained[i])
+      if (!written) {
+        for (let j = i + 1; j < drained.length; j++) {
+          pendingDeltaBuffer.enqueue(sessionID, drained[j])
+        }
+        return false
+      }
     }
+    return true
   }
 
-  async function retryPendingResolutions(): Promise<void> {
-    pendingRetryTimer = undefined
-    const sessions = pendingDeltaBuffer.getPendingSessions()
-    for (const pendingSessionID of sessions) {
-      const target = await resolveStreamTarget(pendingSessionID)
-      if (target) await flushPending(target, pendingSessionID)
+  const retryScheduler = createPendingRetryScheduler({
+    intervalMs: PENDING_RESOLVE_RETRY_MS,
+    getPendingSessions: () => pendingDeltaBuffer.getPendingSessions(),
+    drainSession: async (sessionID: string) => {
+      const target = await resolveStreamTarget(sessionID)
+      if (target) await drainAndWrite(target, sessionID)
+    },
+  })
+
+  async function handlePendingEvent(sessionID: string, pending: PendingStreamEvent): Promise<void> {
+    const target = await resolveStreamTarget(sessionID)
+    if (!target) {
+      pendingDeltaBuffer.enqueue(sessionID, pending)
+      retryScheduler.schedule()
+      return
     }
-    if (pendingDeltaBuffer.getPendingSessions().length > 0) schedulePendingRetry()
-  }
-
-  function schedulePendingRetry(): void {
-    if (pendingRetryTimer) return
-    pendingRetryTimer = setTimeout(() => {
-      void retryPendingResolutions()
-    }, PENDING_RESOLVE_RETRY_MS)
-  }
-
-  function stopPendingRetry(): void {
-    if (!pendingRetryTimer) return
-    clearTimeout(pendingRetryTimer)
-    pendingRetryTimer = undefined
+    pendingDeltaBuffer.enqueue(sessionID, pending)
+    const written = await drainAndWrite(target, sessionID)
+    if (!written) retryScheduler.schedule()
   }
 
   return {
@@ -143,7 +147,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         streamTargetsBySession.delete(sessionID)
         pendingDeltaBuffer.clearSession(sessionID)
         clearSessionPartState(sessionID, partTextByKey)
-        if (pendingDeltaBuffer.getPendingSessions().length === 0) stopPendingRetry()
+        if (pendingDeltaBuffer.getPendingSessions().length === 0) retryScheduler.stop()
         return
       }
 
@@ -151,7 +155,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
         const { sessionID, partID } = event.properties
         pendingDeltaBuffer.removePart(sessionID, partID)
         partTextByKey.delete(`${sessionID}:${partID}`)
-        if (pendingDeltaBuffer.getPendingSessions().length === 0) stopPendingRetry()
+        if (pendingDeltaBuffer.getPendingSessions().length === 0) retryScheduler.stop()
         return
       }
 
@@ -162,42 +166,24 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
           pendingDeltaBuffer.clearSession(sessionID)
           clearSessionPartState(sessionID, partTextByKey)
         }
-        if (pendingDeltaBuffer.getPendingSessions().length === 0) stopPendingRetry()
+        if (pendingDeltaBuffer.getPendingSessions().length === 0) retryScheduler.stop()
         return
       }
 
       if (event.type === "message.part.delta") {
         const pending = normalizeDeltaEventForBuffer(event)
         if (!pending) return
-        const sessionID = event.properties.sessionID
-        const target = await resolveStreamTarget(sessionID)
-        if (!target) {
-          pendingDeltaBuffer.enqueue(sessionID, pending)
-          schedulePendingRetry()
-          return
-        }
-        await flushPending(target, sessionID)
-        const written = await writePendingEvent(target, sessionID, pending)
-        if (!written) schedulePendingRetry()
+        await handlePendingEvent(event.properties.sessionID, pending)
         return
       }
 
       if (event.type !== "message.part.updated") return
       const pending = normalizeUpdateEventForBuffer(event)
       if (!pending) return
-      const sessionID = event.properties.part.sessionID
-      const target = await resolveStreamTarget(sessionID)
-      if (!target) {
-        pendingDeltaBuffer.enqueue(sessionID, pending)
-        schedulePendingRetry()
-        return
-      }
-      await flushPending(target, sessionID)
-      const written = await writePendingEvent(target, sessionID, pending)
-      if (!written) schedulePendingRetry()
+      await handlePendingEvent(event.properties.part.sessionID, pending)
     },
     dispose: () => {
-      stopPendingRetry()
+      retryScheduler.stop()
     },
   }
 }

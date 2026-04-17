@@ -446,6 +446,126 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, fifoPath, "def")
   })
 
+  test("does not lose buffered events after the second drained write fails and retries them in order", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let writeCallCount = 0
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      writeCallCount += 1
+      if (writeCallCount === 2) {
+        const transient: Error & { code?: string } = new Error("EPIPE")
+        transient.code = "EPIPE"
+        throw transient
+      }
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-a", field: "text", delta: "A" },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-b", field: "text", delta: "B" },
+      },
+    })
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-c", field: "text", delta: "C" },
+      },
+    })
+    expect(writeTeamSessionFifoMock).not.toHaveBeenCalled()
+
+    mappingReady = true
+
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-d", field: "text", delta: "D" },
+      },
+    })
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(5)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "A")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "B")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, fifoPath, "B")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(4, fifoPath, "C")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(5, fifoPath, "D")
+  })
+
+  test("defers the current event when a buffered drain fails so stream order is preserved on retry", async () => {
+    // given
+    let mappingReady = false
+    const listActiveTeams = mock(async () => mappingReady ? [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }] : [])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let failNext = true
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      if (failNext) {
+        failNext = false
+        const transient: Error & { code?: string } = new Error("EPIPE")
+        transient.code = "EPIPE"
+        throw transient
+      }
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-a", field: "text", delta: "A" },
+      },
+    })
+    expect(writeTeamSessionFifoMock).not.toHaveBeenCalled()
+
+    mappingReady = true
+
+    await streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-b", field: "text", delta: "B" },
+      },
+    })
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(1)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "A")
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500))
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(3)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "A")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "A")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, fifoPath, "B")
+  })
+
   test("buffers message.part.delta events that arrive before the runtime mapping and replays them in order", async () => {
     // given
     let mappingReady = false
