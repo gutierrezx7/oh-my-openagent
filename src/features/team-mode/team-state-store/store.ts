@@ -1,7 +1,10 @@
-import { readFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { mkdir, readFile, readdir } from "node:fs/promises"
+import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
-import type { RuntimeState } from "../types"
+import { log } from "../../../shared/logger"
+import { type RuntimeState, RuntimeStateSchema, type TeamSpec } from "../types"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { atomicWrite, withLock } from "./locks"
 
@@ -105,7 +108,7 @@ export async function createRuntimeState(
 
 export async function loadRuntimeState(teamRunId: string, config: TeamModeConfig): Promise<RuntimeState> {
   const baseDir = resolveBaseDir(config)
-  const statePath = `${getRuntimeStateDir(baseDir, teamRunId)}/state.json`
+  const stateContent = await readFile(getStatePath(baseDir, teamRunId), "utf8")
 
   try {
     return validateRuntimeState(JSON.parse(stateContent), teamRunId)
