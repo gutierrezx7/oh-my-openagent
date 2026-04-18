@@ -143,15 +143,14 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   async function handlePendingEvent(sessionID: string, pending: PendingStreamEvent): Promise<void> {
     const sessionTokenAtStart = generation.captureSession(sessionID)
     const partTokenAtStart = generation.capturePart(sessionID, pending.partID)
+    pendingDeltaBuffer.enqueue(sessionID, pending)
     const target = await resolveStreamTarget(sessionID)
     if (!generation.isSessionCurrent(sessionID, sessionTokenAtStart)) return
     if (!generation.isPartCurrent(sessionID, pending.partID, partTokenAtStart)) return
     if (!target) {
-      pendingDeltaBuffer.enqueue(sessionID, pending)
       retryScheduler.schedule()
       return
     }
-    pendingDeltaBuffer.enqueue(sessionID, pending)
     const written = await runExclusiveDrain(
       sessionID,
       drainInFlight,

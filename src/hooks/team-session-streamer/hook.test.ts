@@ -705,6 +705,59 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "B\n")
   })
 
+  test("preserves arrival order when resolveStreamTarget completes out of order for same-session events", async () => {
+    // given
+    let resolveCalls = 0
+    let releaseFirstResolve: (() => void) | undefined
+    const firstResolveGate = new Promise<void>((resolve) => {
+      releaseFirstResolve = resolve
+    })
+    const listActiveTeams = mock(async () => {
+      resolveCalls += 1
+      if (resolveCalls === 1) await firstResolveGate
+      return [{
+        teamRunId: "11111111-1111-4111-8111-111111111111",
+        teamName: "team-alpha",
+        status: "active" as const,
+        memberCount: 1,
+        scope: "project" as const,
+      }]
+    })
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    const firstPromise = streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "part-a", sessionID: "member-session", messageID: "msg-a", type: "text", text: "A\n" },
+        },
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5))
+    const secondPromise = streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "part-a", sessionID: "member-session", messageID: "msg-a", type: "text", text: "A\nB\n" },
+        },
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20))
+    releaseFirstResolve?.()
+    await firstPromise
+    await secondPromise
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(2)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "A\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "B\n")
+  })
+
   test("serializes same-session delta bursts so each delta is written once without interleaving", async () => {
     // given
     const listActiveTeams = mock(async () => [{
