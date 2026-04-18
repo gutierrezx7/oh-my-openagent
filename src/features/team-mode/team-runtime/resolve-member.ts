@@ -96,6 +96,10 @@ export async function resolveMember(
       ctx,
       parentAgent,
       categoryExamples,
+      {
+        allowSisyphusJuniorDirect: true,
+        allowPrimaryAgentDelegation: true,
+      },
     )
 
     if (execution.error) {

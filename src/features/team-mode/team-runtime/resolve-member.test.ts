@@ -108,6 +108,10 @@ describe("resolveMember", () => {
       createExecutorContext(),
       "sisyphus",
       "deep, quick",
+      {
+        allowSisyphusJuniorDirect: true,
+        allowPrimaryAgentDelegation: true,
+      },
     )
     expect(resolveCategoryExecutionMock).not.toHaveBeenCalled()
     expect(result.agentToUse).toBe("atlas")
