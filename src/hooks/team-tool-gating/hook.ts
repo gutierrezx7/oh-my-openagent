@@ -96,33 +96,17 @@ export function createTeamToolGating(_ctx: PluginInput, config: TeamModeConfig |
       const teamRunId = getStringArg(output.args, "teamRunId")
       const memberName = getStringArg(output.args, "memberName")
 
-      if (toolName === "team_delete") {
+      if (toolName === "team_delete" || toolName === "team_shutdown_request") {
         if (!isLeadOfTargetTeam(participant, teamRunId)) {
-          throw new Error("team_delete is lead-only")
+          throw new Error(`${toolName} is lead-only`)
         }
 
         return
       }
 
-      if (toolName === "team_shutdown_request") {
-        if (!isLeadOfTargetTeam(participant, teamRunId)) {
-          throw new Error("team_shutdown_request is lead-only")
-        }
-
-        return
-      }
-
-      if (toolName === "team_approve_shutdown") {
+      if (toolName === "team_approve_shutdown" || toolName === "team_reject_shutdown") {
         if (!isLeadOfTargetTeam(participant, teamRunId) && !isTargetMember(participant, teamRunId, memberName)) {
-          throw new Error("team_approve_shutdown: caller must be target member or team lead")
-        }
-
-        return
-      }
-
-      if (toolName === "team_reject_shutdown") {
-        if (!isLeadOfTargetTeam(participant, teamRunId) && !isTargetMember(participant, teamRunId, memberName)) {
-          throw new Error("team_reject_shutdown: caller must be target member or team lead")
+          throw new Error(`${toolName}: caller must be target member or team lead`)
         }
 
         return
@@ -133,7 +117,6 @@ export function createTeamToolGating(_ctx: PluginInput, config: TeamModeConfig |
       }
 
       if (UNIVERSAL_TOOL_NAMES.has(toolName)) {
-
         if (
           (participant.role === "lead" || participant.role === "member")
           && participant.teamRunId === teamRunId

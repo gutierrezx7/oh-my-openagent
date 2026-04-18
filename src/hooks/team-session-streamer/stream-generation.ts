@@ -44,16 +44,18 @@ export function createStreamGeneration(): StreamGeneration {
       sessionTokens.set(sessionID, Symbol(sessionID))
     },
     bumpPart: (sessionID, partID) => {
-      partTokens.set(partKey(sessionID, partID), Symbol(partKey(sessionID, partID)))
+      const key = partKey(sessionID, partID)
+      partTokens.set(key, Symbol(key))
     },
     captureSession: ensureSessionToken,
     capturePart: ensurePartToken,
     isSessionCurrent: (sessionID, token) => sessionTokens.get(sessionID) === token,
     isPartCurrent: (sessionID, partID, token) => partTokens.get(partKey(sessionID, partID)) === token,
     clearSession: (sessionID) => {
+      const partPrefix = `${sessionID}:`
       sessionTokens.delete(sessionID)
-      for (const key of Array.from(partTokens.keys())) {
-        if (key.startsWith(`${sessionID}:`)) partTokens.delete(key)
+      for (const key of partTokens.keys()) {
+        if (key.startsWith(partPrefix)) partTokens.delete(key)
       }
     },
     clearPart: (sessionID, partID) => {

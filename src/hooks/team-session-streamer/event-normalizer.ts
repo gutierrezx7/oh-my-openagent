@@ -1,4 +1,4 @@
-import type { EventMessagePartUpdated, Part } from "@opencode-ai/sdk"
+import type { EventMessagePartUpdated } from "@opencode-ai/sdk"
 
 import type { PendingStreamEvent } from "./pending-delta-buffer"
 
@@ -12,15 +12,11 @@ export type MessagePartDeltaEvent = {
   }
 }
 
-function extractCumulativeText(part: Part): string | undefined {
-  if ("text" in part && typeof part.text === "string") return part.text
-  return undefined
-}
-
 export function normalizeUpdateEventForBuffer(event: EventMessagePartUpdated): PendingStreamEvent | undefined {
-  const cumulativeText = extractCumulativeText(event.properties.part)
+  const { part } = event.properties
+  const cumulativeText = "text" in part && typeof part.text === "string" ? part.text : undefined
   if (cumulativeText === undefined) return undefined
-  return { kind: "update", partID: event.properties.part.id, cumulativeText }
+  return { kind: "update", partID: part.id, cumulativeText }
 }
 
 export function normalizeDeltaEventForBuffer(event: MessagePartDeltaEvent): PendingStreamEvent | undefined {

@@ -96,9 +96,7 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     const drained = pendingDeltaBuffer.drain(sessionID)
     const drainPartTokens = new Map<string, GenerationToken>()
     for (const pending of drained) {
-      if (!drainPartTokens.has(pending.partID)) {
-        drainPartTokens.set(pending.partID, generation.capturePart(sessionID, pending.partID))
-      }
+      drainPartTokens.set(pending.partID, generation.capturePart(sessionID, pending.partID))
     }
     for (let i = 0; i < drained.length; i++) {
       const pending = drained[i]
