@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "fs"
+import { existsSync, readdirSync, readFileSync } from "fs"
 import { homedir } from "os"
-import { basename, join } from "path"
+import { basename, dirname, join } from "path"
 import { fileURLToPath } from "url"
 import { log } from "../../shared/logger"
 import { shouldLoadPluginForCwd } from "./scope-filter"
@@ -65,9 +65,22 @@ function loadClaudeSettings(): ClaudeSettings | null {
   }
 }
 
+function findPluginManifestPath(installPath: string): string | null {
+  const candidates = [
+    join(installPath, ".claude-plugin", "plugin.json"),
+    join(installPath, "plugin.json"),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
 export function loadPluginManifest(installPath: string): PluginManifest | null {
-  const manifestPath = join(installPath, ".claude-plugin", "plugin.json")
-  if (!existsSync(manifestPath)) {
+  const manifestPath = findPluginManifestPath(installPath)
+  if (!manifestPath) {
     return null
   }
 
@@ -164,6 +177,41 @@ function extractPluginEntries(
   return Object.entries(db.plugins).map(([key, installations]) => [key, installations[0]])
 }
 
+function hasPluginManifest(installPath: string): boolean {
+  return findPluginManifestPath(installPath) !== null
+}
+
+export function resolveActualInstallPath(configuredInstallPath: string): string | null {
+  if (existsSync(configuredInstallPath)) {
+    return configuredInstallPath
+  }
+  const parentDir = dirname(configuredInstallPath)
+  if (!existsSync(parentDir)) {
+    return null
+  }
+  let entries: string[]
+  try {
+    entries = readdirSync(parentDir)
+  } catch (error) {
+    log("Failed to scan plugin parent directory for fallback version", {
+      parentDir,
+      error,
+    })
+    return null
+  }
+  const candidates = entries
+    .map((name) => ({ name, path: join(parentDir, name) }))
+    .filter(({ path }) => hasPluginManifest(path))
+    .sort((a, b) => {
+      const aIsUnknown = a.name === "unknown"
+      const bIsUnknown = b.name === "unknown"
+      if (aIsUnknown && !bIsUnknown) return 1
+      if (!aIsUnknown && bIsUnknown) return -1
+      return 0
+    })
+  return candidates[0]?.path ?? null
+}
+
 export function discoverInstalledPlugins(options?: PluginLoaderOptions): PluginLoadResult {
   // Allow overriding the plugins base directory for testing
   const pluginsBaseDir = options?.pluginsHomeOverride ?? getPluginsBaseDir()
@@ -197,23 +245,34 @@ export function discoverInstalledPlugins(options?: PluginLoaderOptions): PluginL
       continue
     }
 
-    const { installPath, scope, version } = installation
+    const { installPath: configuredInstallPath, scope, version } = installation
 
-    if (!existsSync(installPath)) {
+    const installPath = resolveActualInstallPath(configuredInstallPath)
+    if (!installPath) {
       errors.push({
         pluginKey,
-        installPath,
+        installPath: configuredInstallPath,
         error: "Plugin installation path does not exist",
       })
       continue
     }
 
+    if (installPath !== configuredInstallPath) {
+      log(`Recovered plugin install path for ${pluginKey}`, {
+        configured: configuredInstallPath,
+        resolved: installPath,
+      })
+    }
+
     const manifest = pluginManifestLoader(installPath)
     const pluginName = manifest?.name || derivePluginNameFromKey(pluginKey)
 
+    const installationVersion = version && version !== "unknown" ? version : null
+    const resolvedVersion = installationVersion ?? manifest?.version ?? version ?? "unknown"
+
     const loadedPlugin: LoadedPlugin = {
       name: pluginName,
-      version: version || manifest?.version || "unknown",
+      version: resolvedVersion,
       scope: scope as PluginScope,
       installPath,
       pluginKey,
