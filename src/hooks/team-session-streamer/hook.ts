@@ -5,8 +5,9 @@ import { getTeamMemberFifoPath } from "../../features/team-mode/team-layout-tmux
 import * as teamStateStore from "../../features/team-mode/team-state-store"
 import { log } from "../../shared/logger"
 import { clearSessionPartState, type PendingEventPreview, previewPendingEvent } from "./apply-pending-event"
+import { runExclusiveDrain } from "./drain-loop"
 import { type MessagePartDeltaEvent, normalizeDeltaEventForBuffer, normalizeUpdateEventForBuffer } from "./event-normalizer"
-import { writeTeamSessionFifo } from "./fifo-writer"
+import { writeFifoSegment } from "./fifo-segment-writer"
 import { createPendingDeltaBuffer, type PendingStreamEvent } from "./pending-delta-buffer"
 import { createPendingRetryScheduler } from "./pending-retry-scheduler"
 import { createStreamGeneration, type GenerationToken } from "./stream-generation"
@@ -26,18 +27,18 @@ type HookImpl = { event: (input: HookInput) => Promise<void>; dispose: () => voi
 
 type AttemptWriteResult = { written: boolean; preview?: PendingEventPreview }
 
-const DROPPABLE_FIFO_ERROR_CODES = new Set(["ENXIO", "ENOENT", "EPIPE"])
 const PENDING_RESOLVE_RETRY_MS = 250
-
-function isErrorWithCode(error: unknown): error is Error & { code: string } {
-  return error instanceof Error && "code" in error && typeof error.code === "string"
-}
 
 export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: TeamStateStore): HookImpl {
   const streamTargetsBySession = new Map<string, TeamSessionStreamTarget>()
   const partTextByKey = new Map<string, string>()
   const pendingDeltaBuffer = createPendingDeltaBuffer()
   const generation = createStreamGeneration()
+  const drainInFlight = new Set<string>()
+
+  function hasPending(sessionID: string): boolean {
+    return pendingDeltaBuffer.getPendingSessions().includes(sessionID)
+  }
 
   async function resolveStreamTarget(sessionID: string): Promise<TeamSessionStreamTarget | undefined> {
     const cachedTarget = streamTargetsBySession.get(sessionID)
@@ -71,27 +72,12 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
   }
 
   async function writeSegment(target: TeamSessionStreamTarget, sessionID: string, text: string): Promise<boolean> {
-    try {
-      await writeTeamSessionFifo(target.fifoPath, text)
-      return true
-    } catch (error) {
-      if (isErrorWithCode(error) && DROPPABLE_FIFO_ERROR_CODES.has(error.code)) {
-        if (error.code === "ENOENT") {
-          streamTargetsBySession.delete(sessionID)
-        }
-        return false
-      }
-
-      log("team session streamer write failed", {
-        event: "team-mode-session-streamer-write-error",
-        teamRunId: target.teamRunId,
-        memberName: target.memberName,
-        sessionID,
-        fifoPath: target.fifoPath,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      return false
-    }
+    const outcome = await writeFifoSegment(
+      { teamRunId: target.teamRunId, memberName: target.memberName, sessionID, fifoPath: target.fifoPath },
+      text,
+    )
+    if (outcome.clearCache) streamTargetsBySession.delete(sessionID)
+    return outcome.written
   }
 
   async function attemptWrite(
@@ -144,7 +130,13 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
     getPendingSessions: () => pendingDeltaBuffer.getPendingSessions(),
     drainSession: async (sessionID: string) => {
       const target = await resolveStreamTarget(sessionID)
-      if (target) await drainAndWrite(target, sessionID)
+      if (!target) return
+      await runExclusiveDrain(
+        sessionID,
+        drainInFlight,
+        () => drainAndWrite(target, sessionID),
+        () => hasPending(sessionID),
+      )
     },
   })
 
@@ -160,7 +152,12 @@ export function createTeamSessionStreamer(config: TeamModeConfig, stateStore: Te
       return
     }
     pendingDeltaBuffer.enqueue(sessionID, pending)
-    const written = await drainAndWrite(target, sessionID)
+    const written = await runExclusiveDrain(
+      sessionID,
+      drainInFlight,
+      () => drainAndWrite(target, sessionID),
+      () => hasPending(sessionID),
+    )
     if (!written) retryScheduler.schedule()
   }
 

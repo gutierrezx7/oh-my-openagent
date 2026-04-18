@@ -652,6 +652,112 @@ describe("createTeamSessionStreamer", () => {
     expect(writeTeamSessionFifoMock).toHaveBeenCalledWith("/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo", "fresh")
   })
 
+  test("serializes same-session events so a second update does not write the full cumulative text while the first is still in flight", async () => {
+    // given
+    const listActiveTeams = mock(async () => [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let releaseFirstWrite: (() => void) | undefined
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    let callCount = 0
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      callCount += 1
+      if (callCount === 1) await firstWriteGate
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    const firstPromise = streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "part-a", sessionID: "member-session", messageID: "msg-a", type: "text", text: "A\n" },
+        },
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    const secondPromise = streamer.event({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "part-a", sessionID: "member-session", messageID: "msg-a", type: "text", text: "A\nB\n" },
+        },
+      },
+    })
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    releaseFirstWrite?.()
+    await firstPromise
+    await secondPromise
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(2)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "A\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "B\n")
+  })
+
+  test("serializes same-session delta bursts so each delta is written once without interleaving", async () => {
+    // given
+    const listActiveTeams = mock(async () => [{
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      teamName: "team-alpha",
+      status: "active" as const,
+      memberCount: 1,
+      scope: "project" as const,
+    }])
+    const loadRuntimeState = mock(async () => createRuntimeState())
+    let releaseFirstWrite: (() => void) | undefined
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    let callCount = 0
+    writeTeamSessionFifoMock.mockImplementation(async () => {
+      callCount += 1
+      if (callCount === 1) await firstWriteGate
+    })
+    const config = TeamModeConfigSchema.parse({ enabled: true, tmux_visualization: true })
+    const streamer = createTeamSessionStreamer(config, { listActiveTeams, loadRuntimeState })
+
+    // when
+    const pending: Promise<void>[] = []
+    pending.push(streamer.event({
+      event: {
+        type: "message.part.delta",
+        properties: { sessionID: "member-session", partID: "part-a", field: "text", delta: "one\n" },
+      },
+    }))
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    for (const delta of ["two\n", "three\n", "four\n"]) {
+      pending.push(streamer.event({
+        event: {
+          type: "message.part.delta",
+          properties: { sessionID: "member-session", partID: "part-a", field: "text", delta },
+        },
+      }))
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    releaseFirstWrite?.()
+    await Promise.all(pending)
+    streamer.dispose()
+
+    // then
+    const fifoPath = "/tmp/omo-team/11111111-1111-4111-8111-111111111111/member-a.fifo"
+    expect(writeTeamSessionFifoMock).toHaveBeenCalledTimes(4)
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(1, fifoPath, "one\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(2, fifoPath, "two\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(3, fifoPath, "three\n")
+    expect(writeTeamSessionFifoMock).toHaveBeenNthCalledWith(4, fifoPath, "four\n")
+  })
+
   test("does not restore cleared dedupe state when session.deleted arrives during an in-flight write", async () => {
     // given
     const listActiveTeams = mock(async () => [{
