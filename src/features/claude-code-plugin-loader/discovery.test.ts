@@ -859,5 +859,136 @@ describe("discoverInstalledPlugins", () => {
       expect(discovered.plugins).toHaveLength(1)
       expect(discovered.plugins[0]?.installPath).toBe(configuredInstallPath)
     })
+
+    it("#when multiple non-'unknown' semver siblings are present #then the highest version is picked deterministically", async () => {
+      //#given
+      const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
+      const cacheRoot = createTemporaryDirectory("omo-multi-version-cache-")
+      const pluginRoot = join(cacheRoot, "multi-ver-marketplace", "multi-ver")
+      const oldInstallPath = join(pluginRoot, "0.1.0")
+      const middleInstallPath = join(pluginRoot, "0.5.3")
+      const newInstallPath = join(pluginRoot, "1.2.0")
+      const configuredInstallPath = join(pluginRoot, "unknown")
+      for (const dir of [oldInstallPath, middleInstallPath, newInstallPath]) {
+        mkdirSync(join(dir, ".claude-plugin"), { recursive: true })
+        writeFileSync(
+          join(dir, ".claude-plugin", "plugin.json"),
+          JSON.stringify({ name: "multi-ver", version: dir.split("/").pop() }),
+          "utf-8",
+        )
+      }
+
+      writeDatabase(pluginsHome, {
+        version: 2,
+        plugins: {
+          "multi-ver@multi-ver-marketplace": [
+            {
+              scope: "user",
+              installPath: configuredInstallPath,
+              version: "unknown",
+              installedAt: "2025-11-01T13:05:32.029Z",
+              lastUpdated: "2025-11-01T22:22:30.000Z",
+            },
+          ],
+        },
+      })
+
+      //#when
+      const { discoverInstalledPlugins } = await import(`./discovery?t=${Date.now()}-multi-version`)
+      const discovered = discoverInstalledPlugins({
+        pluginsHomeOverride: pluginsHome,
+        enabledPluginsOverride: { "multi-ver@multi-ver-marketplace": true },
+      })
+
+      //#then
+      expect(discovered.errors).toHaveLength(0)
+      expect(discovered.plugins).toHaveLength(1)
+      expect(discovered.plugins[0]?.installPath).toBe(newInstallPath)
+      expect(discovered.plugins[0]?.version).toBe("1.2.0")
+    })
+
+    it("#when a sibling directory exists with a manifest whose 'name' does NOT match the plugin key #then it is rejected and the error surfaces", async () => {
+      //#given
+      const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
+      const cacheRoot = createTemporaryDirectory("omo-wrong-name-cache-")
+      const pluginRoot = join(cacheRoot, "target-plugin-marketplace", "target-plugin")
+      const maliciousSibling = join(pluginRoot, "0.1.0")
+      const configuredInstallPath = join(pluginRoot, "unknown")
+      mkdirSync(join(maliciousSibling, ".claude-plugin"), { recursive: true })
+      writeFileSync(
+        join(maliciousSibling, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "different-plugin", version: "0.1.0" }),
+        "utf-8",
+      )
+
+      writeDatabase(pluginsHome, {
+        version: 2,
+        plugins: {
+          "target-plugin@target-plugin-marketplace": [
+            {
+              scope: "user",
+              installPath: configuredInstallPath,
+              version: "unknown",
+              installedAt: "2025-11-01T13:05:32.029Z",
+              lastUpdated: "2025-11-01T22:22:30.000Z",
+            },
+          ],
+        },
+      })
+
+      //#when
+      const { discoverInstalledPlugins } = await import(`./discovery?t=${Date.now()}-wrong-name`)
+      const discovered = discoverInstalledPlugins({
+        pluginsHomeOverride: pluginsHome,
+        enabledPluginsOverride: { "target-plugin@target-plugin-marketplace": true },
+      })
+
+      //#then
+      expect(discovered.plugins).toHaveLength(0)
+      expect(discovered.errors).toHaveLength(1)
+      expect(discovered.errors[0]?.installPath).toBe(configuredInstallPath)
+    })
+
+    it("#when installation.version is an empty string and manifest.version is also empty #then resolvedVersion falls back to 'unknown' not ''", async () => {
+      //#given
+      const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
+      const cacheRoot = createTemporaryDirectory("omo-empty-version-cache-")
+      const pluginRoot = join(cacheRoot, "empty-ver-marketplace", "empty-ver")
+      const realInstallPath = join(pluginRoot, "0.1.0")
+      const configuredInstallPath = join(pluginRoot, "unknown")
+      mkdirSync(join(realInstallPath, ".claude-plugin"), { recursive: true })
+      writeFileSync(
+        join(realInstallPath, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "empty-ver", version: "" }),
+        "utf-8",
+      )
+
+      writeDatabase(pluginsHome, {
+        version: 2,
+        plugins: {
+          "empty-ver@empty-ver-marketplace": [
+            {
+              scope: "user",
+              installPath: configuredInstallPath,
+              version: "",
+              installedAt: "2025-11-01T13:05:32.029Z",
+              lastUpdated: "2025-11-01T22:22:30.000Z",
+            },
+          ],
+        },
+      })
+
+      //#when
+      const { discoverInstalledPlugins } = await import(`./discovery?t=${Date.now()}-empty-version`)
+      const discovered = discoverInstalledPlugins({
+        pluginsHomeOverride: pluginsHome,
+        enabledPluginsOverride: { "empty-ver@empty-ver-marketplace": true },
+      })
+
+      //#then
+      expect(discovered.errors).toHaveLength(0)
+      expect(discovered.plugins).toHaveLength(1)
+      expect(discovered.plugins[0]?.version).toBe("unknown")
+    })
   })
 })

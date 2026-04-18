@@ -177,11 +177,46 @@ function extractPluginEntries(
   return Object.entries(db.plugins).map(([key, installations]) => [key, installations[0]])
 }
 
-function hasPluginManifest(installPath: string): boolean {
-  return findPluginManifestPath(installPath) !== null
+function readManifestFromPath(manifestPath: string): PluginManifest | null {
+  try {
+    const content = readFileSync(manifestPath, "utf-8")
+    return JSON.parse(content) as PluginManifest
+  } catch {
+    return null
+  }
 }
 
-export function resolveActualInstallPath(configuredInstallPath: string): string | null {
+function parseSemverPrefix(name: string): [number, number, number] | null {
+  const match = name.match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!match) return null
+  return [parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10)]
+}
+
+function compareCandidatePriority(
+  a: { name: string },
+  b: { name: string },
+): number {
+  const aIsUnknown = a.name === "unknown"
+  const bIsUnknown = b.name === "unknown"
+  if (aIsUnknown && !bIsUnknown) return 1
+  if (!aIsUnknown && bIsUnknown) return -1
+
+  const aVer = parseSemverPrefix(a.name)
+  const bVer = parseSemverPrefix(b.name)
+  if (aVer && bVer) {
+    if (aVer[0] !== bVer[0]) return bVer[0] - aVer[0]
+    if (aVer[1] !== bVer[1]) return bVer[1] - aVer[1]
+    return bVer[2] - aVer[2]
+  }
+  if (aVer && !bVer) return -1
+  if (!aVer && bVer) return 1
+  return a.name.localeCompare(b.name)
+}
+
+export function resolveActualInstallPath(
+  configuredInstallPath: string,
+  pluginKey?: string,
+): string | null {
   if (existsSync(configuredInstallPath)) {
     return configuredInstallPath
   }
@@ -199,16 +234,20 @@ export function resolveActualInstallPath(configuredInstallPath: string): string 
     })
     return null
   }
+
+  const expectedName = pluginKey ? derivePluginNameFromKey(pluginKey) : null
+
   const candidates = entries
     .map((name) => ({ name, path: join(parentDir, name) }))
-    .filter(({ path }) => hasPluginManifest(path))
-    .sort((a, b) => {
-      const aIsUnknown = a.name === "unknown"
-      const bIsUnknown = b.name === "unknown"
-      if (aIsUnknown && !bIsUnknown) return 1
-      if (!aIsUnknown && bIsUnknown) return -1
-      return 0
+    .filter(({ path }) => {
+      const manifestPath = findPluginManifestPath(path)
+      if (!manifestPath) return false
+      if (expectedName === null) return true
+      const manifest = readManifestFromPath(manifestPath)
+      if (!manifest?.name) return true
+      return manifest.name === expectedName
     })
+    .sort(compareCandidatePriority)
   return candidates[0]?.path ?? null
 }
 
@@ -247,7 +286,7 @@ export function discoverInstalledPlugins(options?: PluginLoaderOptions): PluginL
 
     const { installPath: configuredInstallPath, scope, version } = installation
 
-    const installPath = resolveActualInstallPath(configuredInstallPath)
+    const installPath = resolveActualInstallPath(configuredInstallPath, pluginKey)
     if (!installPath) {
       errors.push({
         pluginKey,
@@ -267,8 +306,16 @@ export function discoverInstalledPlugins(options?: PluginLoaderOptions): PluginL
     const manifest = pluginManifestLoader(installPath)
     const pluginName = manifest?.name || derivePluginNameFromKey(pluginKey)
 
-    const installationVersion = version && version !== "unknown" ? version : null
-    const resolvedVersion = installationVersion ?? manifest?.version ?? version ?? "unknown"
+    const installationVersionTrim = typeof version === "string" ? version.trim() : ""
+    const installationVersion =
+      installationVersionTrim !== "" && installationVersionTrim !== "unknown"
+        ? version
+        : null
+    const manifestVersionTrim =
+      typeof manifest?.version === "string" ? manifest.version.trim() : ""
+    const manifestVersion = manifestVersionTrim !== "" ? manifest?.version : null
+    const rawVersion = installationVersionTrim !== "" ? version : null
+    const resolvedVersion = installationVersion ?? manifestVersion ?? rawVersion ?? "unknown"
 
     const loadedPlugin: LoadedPlugin = {
       name: pluginName,
