@@ -192,6 +192,8 @@ function parseSemverPrefix(name: string): [number, number, number] | null {
   return [parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10)]
 }
 
+const SEMVER_SUFFIX_MARKER = /^\d+\.\d+\.\d+[-+]/
+
 function compareCandidatePriority(
   a: { name: string },
   b: { name: string },
@@ -206,7 +208,12 @@ function compareCandidatePriority(
   if (aVer && bVer) {
     if (aVer[0] !== bVer[0]) return bVer[0] - aVer[0]
     if (aVer[1] !== bVer[1]) return bVer[1] - aVer[1]
-    return bVer[2] - aVer[2]
+    if (aVer[2] !== bVer[2]) return bVer[2] - aVer[2]
+    const aHasSuffix = SEMVER_SUFFIX_MARKER.test(a.name)
+    const bHasSuffix = SEMVER_SUFFIX_MARKER.test(b.name)
+    if (!aHasSuffix && bHasSuffix) return -1
+    if (aHasSuffix && !bHasSuffix) return 1
+    return a.name.localeCompare(b.name)
   }
   if (aVer && !bVer) return -1
   if (!aVer && bVer) return 1
@@ -244,7 +251,7 @@ export function resolveActualInstallPath(
       if (!manifestPath) return false
       if (expectedName === null) return true
       const manifest = readManifestFromPath(manifestPath)
-      if (!manifest?.name) return true
+      if (!manifest?.name) return false
       return manifest.name === expectedName
     })
     .sort(compareCandidatePriority)

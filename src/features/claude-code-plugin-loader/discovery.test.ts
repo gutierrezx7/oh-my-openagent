@@ -949,6 +949,135 @@ describe("discoverInstalledPlugins", () => {
       expect(discovered.errors[0]?.installPath).toBe(configuredInstallPath)
     })
 
+    it("#when two siblings share the same X.Y.Z prefix but one is a prerelease #then the plain version wins deterministically", async () => {
+      //#given
+      const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
+      const cacheRoot = createTemporaryDirectory("omo-prerelease-cache-")
+      const pluginRoot = join(cacheRoot, "tie-plugin-marketplace", "tie-plugin")
+      const plainInstallPath = join(pluginRoot, "1.2.0")
+      const prereleaseInstallPath = join(pluginRoot, "1.2.0-beta.1")
+      const configuredInstallPath = join(pluginRoot, "unknown")
+      for (const dir of [plainInstallPath, prereleaseInstallPath]) {
+        mkdirSync(join(dir, ".claude-plugin"), { recursive: true })
+        writeFileSync(
+          join(dir, ".claude-plugin", "plugin.json"),
+          JSON.stringify({ name: "tie-plugin", version: dir.split("/").pop() }),
+          "utf-8",
+        )
+      }
+
+      writeDatabase(pluginsHome, {
+        version: 2,
+        plugins: {
+          "tie-plugin@tie-plugin-marketplace": [
+            {
+              scope: "user",
+              installPath: configuredInstallPath,
+              version: "unknown",
+              installedAt: "2025-11-01T13:05:32.029Z",
+              lastUpdated: "2025-11-01T22:22:30.000Z",
+            },
+          ],
+        },
+      })
+
+      //#when
+      const { discoverInstalledPlugins } = await import(`./discovery?t=${Date.now()}-prerelease`)
+      const discovered = discoverInstalledPlugins({
+        pluginsHomeOverride: pluginsHome,
+        enabledPluginsOverride: { "tie-plugin@tie-plugin-marketplace": true },
+      })
+
+      //#then
+      expect(discovered.errors).toHaveLength(0)
+      expect(discovered.plugins).toHaveLength(1)
+      expect(discovered.plugins[0]?.installPath).toBe(plainInstallPath)
+    })
+
+    it("#when a sibling has a malformed manifest that cannot be parsed #then it is rejected under strict name-match", async () => {
+      //#given
+      const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
+      const cacheRoot = createTemporaryDirectory("omo-malformed-cache-")
+      const pluginRoot = join(cacheRoot, "strict-plugin-marketplace", "strict-plugin")
+      const malformedSibling = join(pluginRoot, "0.1.0")
+      const configuredInstallPath = join(pluginRoot, "unknown")
+      mkdirSync(join(malformedSibling, ".claude-plugin"), { recursive: true })
+      writeFileSync(
+        join(malformedSibling, ".claude-plugin", "plugin.json"),
+        "{ this is not valid json",
+        "utf-8",
+      )
+
+      writeDatabase(pluginsHome, {
+        version: 2,
+        plugins: {
+          "strict-plugin@strict-plugin-marketplace": [
+            {
+              scope: "user",
+              installPath: configuredInstallPath,
+              version: "unknown",
+              installedAt: "2025-11-01T13:05:32.029Z",
+              lastUpdated: "2025-11-01T22:22:30.000Z",
+            },
+          ],
+        },
+      })
+
+      //#when
+      const { discoverInstalledPlugins } = await import(`./discovery?t=${Date.now()}-malformed`)
+      const discovered = discoverInstalledPlugins({
+        pluginsHomeOverride: pluginsHome,
+        enabledPluginsOverride: { "strict-plugin@strict-plugin-marketplace": true },
+      })
+
+      //#then
+      expect(discovered.plugins).toHaveLength(0)
+      expect(discovered.errors).toHaveLength(1)
+      expect(discovered.errors[0]?.installPath).toBe(configuredInstallPath)
+    })
+
+    it("#when a sibling's manifest lacks a 'name' field #then it is rejected under strict name-match", async () => {
+      //#given
+      const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
+      const cacheRoot = createTemporaryDirectory("omo-noname-cache-")
+      const pluginRoot = join(cacheRoot, "named-plugin-marketplace", "named-plugin")
+      const nameMissingSibling = join(pluginRoot, "0.1.0")
+      const configuredInstallPath = join(pluginRoot, "unknown")
+      mkdirSync(join(nameMissingSibling, ".claude-plugin"), { recursive: true })
+      writeFileSync(
+        join(nameMissingSibling, ".claude-plugin", "plugin.json"),
+        JSON.stringify({ version: "0.1.0" }),
+        "utf-8",
+      )
+
+      writeDatabase(pluginsHome, {
+        version: 2,
+        plugins: {
+          "named-plugin@named-plugin-marketplace": [
+            {
+              scope: "user",
+              installPath: configuredInstallPath,
+              version: "unknown",
+              installedAt: "2025-11-01T13:05:32.029Z",
+              lastUpdated: "2025-11-01T22:22:30.000Z",
+            },
+          ],
+        },
+      })
+
+      //#when
+      const { discoverInstalledPlugins } = await import(`./discovery?t=${Date.now()}-noname`)
+      const discovered = discoverInstalledPlugins({
+        pluginsHomeOverride: pluginsHome,
+        enabledPluginsOverride: { "named-plugin@named-plugin-marketplace": true },
+      })
+
+      //#then
+      expect(discovered.plugins).toHaveLength(0)
+      expect(discovered.errors).toHaveLength(1)
+      expect(discovered.errors[0]?.installPath).toBe(configuredInstallPath)
+    })
+
     it("#when installation.version is an empty string and manifest.version is also empty #then resolvedVersion falls back to 'unknown' not ''", async () => {
       //#given
       const pluginsHome = process.env.CLAUDE_PLUGINS_HOME as string
