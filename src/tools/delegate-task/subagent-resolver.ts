@@ -93,7 +93,8 @@ Create the work plan directly - that's your job as the planning agent.`,
       }
     }
 
-    const matchedAgent = options.allowPrimaryAgentDelegation && matchedPrimaryAgent
+    const usePrimary = options.allowPrimaryAgentDelegation && matchedPrimaryAgent !== undefined
+    const matchedAgent = usePrimary
       ? matchedPrimaryAgent
       : findCallableAgentMatch(mergedAgents, agentToUse)
 
@@ -105,7 +106,9 @@ Create the work plan directly - that's your job as the planning agent.`,
       }
     }
 
-    agentToUse = stripAgentListSortPrefix(matchedAgent.name)
+    agentToUse = usePrimary
+      ? matchedAgent.name
+      : stripAgentListSortPrefix(matchedAgent.name)
 
     const agentConfigKey = getAgentConfigKey(agentToUse)
     const agentOverride = agentOverrides?.[agentConfigKey as keyof typeof agentOverrides]

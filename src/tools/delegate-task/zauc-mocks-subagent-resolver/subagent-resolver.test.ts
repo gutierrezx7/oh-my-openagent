@@ -188,7 +188,7 @@ describe("resolveSubagentExecution", () => {
 
     //#then
     expect(result.error).toBeUndefined()
-    expect(result.agentToUse).toBe("Sisyphus - Ultraworker")
+    expect(result.agentToUse).toBe("\u200BSisyphus - Ultraworker")
   })
 
   test("allows delegating to Sisyphus-Junior when allowSisyphusJuniorDirect is enabled (team-mode path)", async () => {
