@@ -58,26 +58,40 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
   if (pluginConfig.openclaw) {
     await initializeOpenClaw(pluginConfig.openclaw)
   }
+  let startTeamModeResume: (() => void) | undefined
   if (pluginConfig.team_mode?.enabled) {
+    const teamModeConfig = pluginConfig.team_mode
     try {
       const { ensureBaseDirs, resolveBaseDir } = await import("./features/team-mode/team-registry/paths")
       const { checkTeamModeDependencies } = await import("./features/team-mode/deps")
-      const { resumeAllTeams } = await import("./features/team-mode/team-state-store/resume")
       const resumeContext: ExecutorContext = {
         client: input.client,
         directory: input.directory,
         manager: {} as ExecutorContext["manager"],
       }
-      await checkTeamModeDependencies(pluginConfig.team_mode)
-      await ensureBaseDirs(resolveBaseDir(pluginConfig.team_mode))
+      await checkTeamModeDependencies(teamModeConfig)
+      await ensureBaseDirs(resolveBaseDir(teamModeConfig))
       if (pluginConfig.disabled_skills?.includes("team-mode")) {
         console.warn(
           "[team-mode] enabled=true but team-mode skill is disabled; skill docs hidden but tools still registered (D-29)",
         )
       }
-      await resumeAllTeams(resumeContext, pluginConfig.team_mode).catch((err) => {
-        console.warn("[team-mode] resume failed (non-fatal):", err)
-      })
+      // Defer resumeAllTeams: it calls ctx.client.session.get() back into the opencode
+      // server, which is not ready to handle requests until plugin server() returns.
+      // Awaiting here causes an infinite hang. setTimeout(0) is staged AFTER
+      // createPluginInterface() to guarantee the resume only fires once init completes.
+      startTeamModeResume = (): void => {
+        globalThis.setTimeout(() => {
+          void (async (): Promise<void> => {
+            try {
+              const { resumeAllTeams } = await import("./features/team-mode/team-state-store/resume")
+              await resumeAllTeams(resumeContext, teamModeConfig)
+            } catch (err) {
+              console.warn("[team-mode] resume failed (non-fatal):", err)
+            }
+          })()
+        }, 0)
+      }
     } catch (err) {
       console.warn("[team-mode] init failed:", err)
     }
@@ -131,6 +145,8 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
     hooks,
     tools: toolsResult.filteredTools,
   })
+
+  startTeamModeResume?.()
 
   return {
     ...pluginInterface,
