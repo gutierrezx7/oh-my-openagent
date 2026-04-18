@@ -95,7 +95,7 @@ export function validateDualSupport(member: Member): void {
     )
   }
 
-  if (member.kind === "category" && trimmedPrompt !== undefined && trimmedPrompt.length < 8) {
+  if (member.kind === "category" && member.prompt.trim().length < 8) {
     throw new TeamSpecValidationError(
       `Member '${member.name}' category prompt must be at least 8 characters long.`,
       "CATEGORY_PROMPT_TOO_SHORT",

@@ -57,7 +57,6 @@ export function findLatestShutdownRequestIndex(
 ): number {
   for (let index = runtimeState.shutdownRequests.length - 1; index >= 0; index -= 1) {
     const shutdownRequest = runtimeState.shutdownRequests[index]
-    if (!shutdownRequest) continue
     if (shutdownRequest.memberId !== memberName) continue
     if (requesterName !== undefined && shutdownRequest.requesterName !== requesterName) continue
     return index
@@ -69,7 +68,7 @@ export function findLatestShutdownRequestIndex(
 export async function removeWorktrees(memberPaths: Array<string | undefined>): Promise<string[]> {
   const removedWorktrees: string[] = []
 
-  for (const memberPath of [...new Set(memberPaths)]) {
+  for (const memberPath of new Set(memberPaths)) {
     if (!memberPath) continue
     await rm(memberPath, { recursive: true, force: true })
     removedWorktrees.push(memberPath)

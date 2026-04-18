@@ -57,14 +57,6 @@ function sanitizeRuntimeState(runtimeState: RuntimeState): Omit<RuntimeState, "m
   }
 }
 
-function resolveProjectRoot(toolContext: TeamLifecycleToolContext): string {
-  return typeof toolContext.directory === "string" ? toolContext.directory : process.cwd()
-}
-
-function serializeResult(result: Record<string, unknown>): string {
-  return JSON.stringify(result)
-}
-
 function parseInlineTeamSpec(rawSpec: unknown): TeamSpec {
   let specObject: unknown = rawSpec
   if (typeof rawSpec === "string") {
@@ -113,14 +105,14 @@ export function createTeamCreateTool(
       const runtimeContext = toolContext as TeamLifecycleToolContext
       const leadSessionId = args.leadSessionId ?? runtimeContext.sessionID
       if (!leadSessionId) throw new Error("team_create requires leadSessionId or tool context sessionID")
-      const projectRoot = resolveProjectRoot(runtimeContext)
+      const projectRoot = typeof runtimeContext.directory === "string" ? runtimeContext.directory : process.cwd()
       const spec = args.teamName ? await loadTeamSpec(args.teamName, config, projectRoot) : parseInlineTeamSpec(args.inline_spec)
       const participantRuntime = await findParticipantRuntime(runtimeContext.sessionID, config)
       if (participantRuntime && (participantRuntime.teamName !== spec.name || participantRuntime.leadSessionId !== leadSessionId)) {
         throw new Error(`team_create denied: session is already a participant of team ${participantRuntime.teamRunId}`)
       }
       const runtimeState = await createTeamRun(spec, leadSessionId, { client, manager: bgMgr, directory: projectRoot }, config, bgMgr, tmuxMgr)
-      return serializeResult({ teamRunId: runtimeState.teamRunId, runtimeState: sanitizeRuntimeState(runtimeState) })
+      return JSON.stringify({ teamRunId: runtimeState.teamRunId, runtimeState: sanitizeRuntimeState(runtimeState) })
     },
   })
 }
@@ -141,7 +133,7 @@ export function createTeamDeleteTool(
       const runtimeContext = toolContext as TeamLifecycleToolContext
       const { runtimeState, participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       if (participant?.role !== "lead") throw new Error("team_delete is lead-only")
-      return serializeResult({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, backgroundManager)) })
+      return JSON.stringify({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, backgroundManager)) })
     },
   })
 }
@@ -158,7 +150,7 @@ export function createTeamShutdownRequestTool(config: TeamModeConfig, client: Op
       const { participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       if (participant?.role !== "lead") throw new Error("team_shutdown_request is lead-only")
       await requestShutdownOfMember(args.teamRunId, args.targetMemberName, participant.memberName, config)
-      return serializeResult({ teamRunId: args.teamRunId, targetMemberName: args.targetMemberName, requesterName: participant.memberName, status: "shutdown_requested" })
+      return JSON.stringify({ teamRunId: args.teamRunId, targetMemberName: args.targetMemberName, requesterName: participant.memberName, status: "shutdown_requested" })
     },
   })
 }
@@ -175,7 +167,7 @@ export function createTeamApproveShutdownTool(config: TeamModeConfig, client: Op
       const { participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       if (!participant || (participant.role !== "lead" && participant.memberName !== args.memberName)) throw new Error("team_approve_shutdown: caller must be target member or team lead")
       await approveShutdown(args.teamRunId, args.memberName, participant.memberName, config)
-      return serializeResult({ teamRunId: args.teamRunId, memberName: args.memberName, approverName: participant.memberName, status: "shutdown_approved" })
+      return JSON.stringify({ teamRunId: args.teamRunId, memberName: args.memberName, approverName: participant.memberName, status: "shutdown_approved" })
     },
   })
 }
@@ -192,7 +184,7 @@ export function createTeamRejectShutdownTool(config: TeamModeConfig, client: Ope
       const { participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       if (!participant || (participant.role !== "lead" && participant.memberName !== args.memberName)) throw new Error("team_reject_shutdown: caller must be target member or team lead")
       await rejectShutdown(args.teamRunId, args.memberName, args.reason, config)
-      return serializeResult({ teamRunId: args.teamRunId, memberName: args.memberName, rejectedBy: participant.memberName, reason: args.reason, status: "shutdown_rejected" })
+      return JSON.stringify({ teamRunId: args.teamRunId, memberName: args.memberName, rejectedBy: participant.memberName, reason: args.reason, status: "shutdown_rejected" })
     },
   })
 }

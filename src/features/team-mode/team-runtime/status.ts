@@ -64,10 +64,6 @@ function getPrimaryModelKey(bgMgr: TeamBackgroundManager | undefined, leadSessio
   return `${firstModel.providerID}/${firstModel.modelID}`
 }
 
-function isTaskStatus(status: string): status is Task["status"] {
-  return status === "pending" || status === "claimed" || status === "in_progress" || status === "completed" || status === "deleted"
-}
-
 function countTasks(tasks: Task[]): TeamStatus["tasks"] {
   const counts = {
     pending: 0,
@@ -79,8 +75,6 @@ function countTasks(tasks: Task[]): TeamStatus["tasks"] {
   }
 
   for (const task of tasks) {
-    if (!isTaskStatus(task.status)) continue
-
     counts[task.status] += 1
     counts.total += 1
   }

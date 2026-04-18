@@ -9,17 +9,13 @@ export class MemberValidationError extends Error {
   }
 }
 
-function getMemberName(input: Record<string, unknown>): string {
-  return typeof input.name === "string" ? input.name : "<unnamed>"
-}
-
 function translateMemberError(
   input: Record<string, unknown>,
   agentEligibilityRegistry: Readonly<Record<string, { verdict: "eligible" | "conditional" | "hard-reject"; rejectionMessage?: string }>>,
 ): MemberValidationError {
-  const name = getMemberName(input)
-  const hasCategory = "category" in input && input.category != null
-  const hasSubagentType = "subagent_type" in input && input.subagent_type != null
+  const name = typeof input.name === "string" ? input.name : "<unnamed>"
+  const hasCategory = input.category != null
+  const hasSubagentType = input.subagent_type != null
   const hasKind = input.kind === "category" || input.kind === "subagent_type"
 
   if (hasCategory && hasSubagentType) {
@@ -66,21 +62,21 @@ export function createParseMember<TMember>(
   agentEligibilityRegistry: Readonly<Record<string, { verdict: "eligible" | "conditional" | "hard-reject"; rejectionMessage?: string }>>,
 ): (input: unknown) => TMember {
   return function parseMember(input: unknown) {
-  if (input == null || typeof input !== "object") {
-    throw new MemberValidationError("Member must be an object")
-  }
+    if (input == null || typeof input !== "object") {
+      throw new MemberValidationError("Member must be an object")
+    }
 
-  const raw = input as Record<string, unknown>
-  const result = memberSchema.safeParse(
-    raw.kind === undefined && (raw.category !== undefined || raw.subagent_type !== undefined)
-      ? { ...raw, kind: raw.category !== undefined ? "category" : "subagent_type" }
-      : raw,
-  )
+    const raw = input as Record<string, unknown>
+    const result = memberSchema.safeParse(
+      raw.kind === undefined && (raw.category !== undefined || raw.subagent_type !== undefined)
+        ? { ...raw, kind: raw.category !== undefined ? "category" : "subagent_type" }
+        : raw,
+    )
 
-  if (!result.success) {
-    throw translateMemberError(raw, agentEligibilityRegistry)
-  }
+    if (!result.success) {
+      throw translateMemberError(raw, agentEligibilityRegistry)
+    }
 
-  return result.data
+    return result.data
   }
 }

@@ -21,11 +21,11 @@ export async function requestShutdownOfMember(
   getRuntimeMember(runtimeState, requesterName)
 
   const existingRequestIndex = findLatestShutdownRequestIndex(runtimeState, targetMemberName, requesterName)
-  if (existingRequestIndex >= 0) {
-    const existingRequest = runtimeState.shutdownRequests[existingRequestIndex]
-    if (existingRequest?.approvedAt === undefined && existingRequest?.rejectedAt === undefined) {
-      return
-    }
+  const existingRequest = existingRequestIndex >= 0
+    ? runtimeState.shutdownRequests[existingRequestIndex]
+    : undefined
+  if (existingRequest && existingRequest.approvedAt === undefined && existingRequest.rejectedAt === undefined) {
+    return
   }
 
   await sendMessage(
@@ -37,11 +37,11 @@ export async function requestShutdownOfMember(
 
   await transitionRuntimeState(teamRunId, (currentRuntimeState) => {
     const duplicateRequestIndex = findLatestShutdownRequestIndex(currentRuntimeState, targetMemberName, requesterName)
-    if (duplicateRequestIndex >= 0) {
-      const duplicateRequest = currentRuntimeState.shutdownRequests[duplicateRequestIndex]
-      if (duplicateRequest?.approvedAt === undefined && duplicateRequest?.rejectedAt === undefined) {
-        return currentRuntimeState
-      }
+    const duplicateRequest = duplicateRequestIndex >= 0
+      ? currentRuntimeState.shutdownRequests[duplicateRequestIndex]
+      : undefined
+    if (duplicateRequest && duplicateRequest.approvedAt === undefined && duplicateRequest.rejectedAt === undefined) {
+      return currentRuntimeState
     }
 
     return {

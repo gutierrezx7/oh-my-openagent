@@ -108,8 +108,8 @@ export async function createTeamRun(
   const baseDir = resolveBaseDir(config)
   await ensureBaseDirs(baseDir)
   const runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
-  await Promise.all(spec.members.map(async (member) => mkdir(getInboxDir(baseDir, runtimeState.teamRunId, member.name), { recursive: true })))
-  await Promise.all(spec.members.map(async (member) => ensureTeamMemberFifo(runtimeState.teamRunId, member.name)))
+  await Promise.all(spec.members.map((member) => mkdir(getInboxDir(baseDir, runtimeState.teamRunId, member.name), { recursive: true })))
+  await Promise.all(spec.members.map((member) => ensureTeamMemberFifo(runtimeState.teamRunId, member.name)))
 
   const deadlineAt = Date.now() + (config.max_wall_clock_minutes * 60_000)
   const resources: SpawnedMemberResource[] = spec.members.map(() => ({}))
@@ -127,8 +127,7 @@ export async function createTeamRun(
           failure = new Error("team creation exceeded max_wall_clock_minutes")
           return
         }
-        const memberIndex = nextMemberIndex
-        nextMemberIndex += 1
+        const memberIndex = nextMemberIndex++
         const member = spec.members[memberIndex]
         if (!member) return
         const resource = resources[memberIndex]

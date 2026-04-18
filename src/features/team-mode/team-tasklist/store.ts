@@ -29,7 +29,7 @@ export async function createTask(
   await mkdir(tasksDirectory, { recursive: true, mode: 0o700 })
   await mkdir(path.join(tasksDirectory, "claims"), { recursive: true, mode: 0o700 })
 
-  return await withLock(path.join(tasksDirectory, ".lock"), async () => {
+  return withLock(path.join(tasksDirectory, ".lock"), async () => {
     const watermarkPath = path.join(tasksDirectory, HIGH_WATERMARK_FILE)
     const nextTaskId = (await readHighWatermark(watermarkPath)) + 1
     await atomicWrite(watermarkPath, String(nextTaskId))

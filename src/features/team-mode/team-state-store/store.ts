@@ -43,10 +43,6 @@ function serializeRuntimeState(runtimeState: RuntimeState): string {
   return `${JSON.stringify(parsedRuntimeState, null, 2)}\n`
 }
 
-function determineAgentType(spec: TeamSpec, memberName: string): "leader" | "general-purpose" {
-  return spec.leadAgentId === memberName ? "leader" : "general-purpose"
-}
-
 function validateRuntimeState(rawState: unknown, teamRunId: string): RuntimeState {
   const parsedRuntimeState = RuntimeStateSchema.safeParse(rawState)
   if (!parsedRuntimeState.success) {
@@ -84,7 +80,7 @@ export async function createRuntimeState(
     leadSessionId,
     members: spec.members.map((member) => ({
       name: member.name,
-      agentType: determineAgentType(spec, member.name),
+      agentType: spec.leadAgentId === member.name ? "leader" : "general-purpose",
       status: "pending",
       color: member.color,
       worktreePath: member.worktreePath,

@@ -11,10 +11,6 @@ type TeamSpecEntry = {
   path: string
 }
 
-function resolveHomeDir(): string {
-  return homedir()
-}
-
 function getTeamDirectory(baseDir: string, teamName: string, scope: "user" | "project", projectRoot?: string): string {
   if (scope === "project") {
     return path.join(projectRoot ?? "", ".omo", "teams", teamName)
@@ -24,7 +20,7 @@ function getTeamDirectory(baseDir: string, teamName: string, scope: "user" | "pr
 }
 
 export function resolveBaseDir(config: TeamModeConfig): string {
-  return config.base_dir ?? path.join(resolveHomeDir(), ".omo")
+  return config.base_dir ?? path.join(homedir(), ".omo")
 }
 
 export function getTeamSpecPath(

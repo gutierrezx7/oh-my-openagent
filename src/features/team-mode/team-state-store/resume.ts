@@ -36,7 +36,8 @@ function extractErrorStatus(error: unknown): number | undefined {
 function isSessionNotFoundError(error: unknown): boolean {
   if (extractErrorStatus(error) === 404) return true
   const message = extractErrorMessage(error)?.toLowerCase()
-  return message?.includes("not found") === true || message?.includes("missing") === true
+  if (!message) return false
+  return message.includes("not found") || message.includes("missing")
 }
 
 async function runtimeDirectoryExists(teamRunId: string, config: TeamModeConfig): Promise<boolean> {
@@ -70,7 +71,7 @@ async function leadSessionExists(
   try {
     const response = await ctx.client.session.get({ path: { id: leadSessionId } })
 
-    if (response.error !== undefined && response.error !== null) {
+    if (response.error != null) {
       if (isSessionNotFoundError(response.error)) return false
       throw toError(response.error)
     }
@@ -130,10 +131,6 @@ export async function resumeAllTeams(
           break
         }
 
-        case "shutdown_requested": {
-          break
-        }
-
         case "deleting": {
           await cleanupMemberWorktrees(runtimeState)
           await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
@@ -154,6 +151,7 @@ export async function resumeAllTeams(
           break
         }
 
+        case "shutdown_requested":
         case "orphaned": {
           break
         }

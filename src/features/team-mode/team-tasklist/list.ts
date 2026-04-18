@@ -29,9 +29,7 @@ export async function listTasks(
 
   const parsedTasks: Task[] = []
   for (const entry of entries) {
-    if (entry.isDirectory()) continue
-    if (entry.name.startsWith(".")) continue
-    if (!entry.name.endsWith(".json")) continue
+    if (entry.isDirectory() || entry.name.startsWith(".") || !entry.name.endsWith(".json")) continue
 
     const taskPath = path.join(tasksDirectory, entry.name)
     try {
@@ -56,7 +54,12 @@ export async function listTasks(
   }
 
   return parsedTasks
-    .filter((task) => filter?.status === undefined || task.status === filter.status)
-    .filter((task) => filter?.owner === undefined || task.owner === filter.owner)
+    .filter((task) => {
+      if (filter?.status !== undefined && task.status !== filter.status) {
+        return false
+      }
+
+      return filter?.owner === undefined || task.owner === filter.owner
+    })
     .sort((leftTask, rightTask) => Number.parseInt(leftTask.id, 10) - Number.parseInt(rightTask.id, 10))
 }

@@ -17,10 +17,6 @@ type TeamListEntry = {
   memberCount: number
 }
 
-function getProjectRoot(): string {
-  return process.cwd()
-}
-
 export function createTeamStatusTool(
   config: TeamModeConfig,
   client: OpencodeClient,
@@ -51,7 +47,7 @@ export function createTeamListTool(config: TeamModeConfig, client: OpencodeClien
     },
     execute: async (args: { scope?: TeamListScope }) => {
       const scope = args.scope ?? "all"
-      const projectRoot = getProjectRoot()
+      const projectRoot = process.cwd()
       const declaredTeamSpecs = await discoverTeamSpecs(config, projectRoot)
       const activeTeams = await listActiveTeams(config)
 
@@ -62,7 +58,7 @@ export function createTeamListTool(config: TeamModeConfig, client: OpencodeClien
       const declaredTeamSpecsByName = new Map(
         await Promise.all(filteredDeclaredTeamSpecs.map(async (teamSpec) => {
           const loadedTeamSpec = await loadTeamSpec(teamSpec.name, config, projectRoot)
-          return [teamSpec.name, { scope: teamSpec.scope, memberCount: loadedTeamSpec.members.length }] as const
+          return [teamSpec.name, loadedTeamSpec.members.length] as const
         })),
       )
 
@@ -72,18 +68,18 @@ export function createTeamListTool(config: TeamModeConfig, client: OpencodeClien
 
       for (const declaredTeamSpec of filteredDeclaredTeamSpecs) {
         const activeTeam = activeTeamsByName.get(declaredTeamSpec.name)
-        const declaredTeamSpecDetails = declaredTeamSpecsByName.get(declaredTeamSpec.name)
+        const declaredTeamSpecMemberCount = declaredTeamSpecsByName.get(declaredTeamSpec.name)
         teamEntries.push({
           name: declaredTeamSpec.name,
           scope: declaredTeamSpec.scope,
           status: activeTeam?.status ?? "not-started",
           teamRunId: activeTeam?.teamRunId,
-          memberCount: activeTeam?.memberCount ?? declaredTeamSpecDetails?.memberCount ?? 0,
+          memberCount: activeTeam?.memberCount ?? declaredTeamSpecMemberCount ?? 0,
         })
       }
 
       for (const activeTeam of activeTeams) {
-        if (filteredDeclaredTeamSpecs.some((teamSpec) => teamSpec.name === activeTeam.teamName)) continue
+        if (declaredTeamSpecsByName.has(activeTeam.teamName)) continue
 
         teamEntries.push({
           name: activeTeam.teamName,

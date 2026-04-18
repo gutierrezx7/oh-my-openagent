@@ -25,12 +25,15 @@ async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, c
     if (team.teamRunId !== teamRunId) continue
 
     const runtimeState = await loadRuntimeState(team.teamRunId, config)
-    const leadMember = runtimeState.members.find((member) => member.agentType === "leader" && runtimeState.leadSessionId === sessionID)
+    const isLead = runtimeState.leadSessionId === sessionID
+    const leadMember = isLead
+      ? runtimeState.members.find((member) => member.agentType === "leader")
+      : undefined
     const member = runtimeState.members.find((entry) => entry.sessionId === sessionID)
 
     return {
       teamRunId: runtimeState.teamRunId,
-      isLead: Boolean(leadMember),
+      isLead,
       senderName: leadMember?.name ?? member?.name ?? "unknown",
       activeMembers: runtimeState.members
         .filter((entry) => entry.sessionId !== undefined)
