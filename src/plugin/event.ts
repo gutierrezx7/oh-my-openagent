@@ -38,8 +38,6 @@ import { dispatchOpenClawEvent } from "../openclaw/runtime-dispatch";
 import { createTeamIdleWakeHint } from "../hooks/team-session-events/team-idle-wake-hint";
 import { createTeamLeadOrphanHandler } from "../hooks/team-session-events/team-lead-orphan-handler";
 import { createTeamMemberErrorHandler } from "../hooks/team-session-events/team-member-error-handler";
-import { createTeamSessionStreamer } from "../hooks/team-session-streamer/hook";
-import * as teamStateStore from "../features/team-mode/team-state-store";
 
 import type { CreatedHooks } from "../create-hooks";
 import type { Managers } from "../create-managers";
@@ -272,7 +270,6 @@ export function createEventHandler(args: {
     await runEventHookSafely("writeExistingFileGuard", hooks.writeExistingFileGuard?.event, input);
     await runEventHookSafely("atlasHook", hooks.atlasHook?.handler, input);
     await runEventHookSafely("autoSlashCommand", hooks.autoSlashCommand?.event, input);
-    await runEventHookSafely("teamSessionStreamer", teamSessionStreamer?.event, input);
   };
 
   const recentSyntheticIdles = new Map<string, number>();
@@ -294,9 +291,6 @@ export function createEventHandler(args: {
           },
         },
       }, teamModeConfig)
-    : undefined;
-  const teamSessionStreamer = teamModeConfig?.tmux_visualization
-    ? createTeamSessionStreamer(teamModeConfig, teamStateStore)
     : undefined;
   const TMUX_ACTIVITY_EVENT_TYPES = new Set([
     "message.updated",

@@ -3,7 +3,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { access, mkdir, rm } from "node:fs/promises"
 
-import { getTeamFifoDirectory } from "../team-layout-tmux/fifo-path"
 import { sendMessage } from "../team-mailbox/send"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
@@ -132,7 +131,6 @@ describe("team-runtime shutdown", () => {
     // given
     const fixture = await createFixture()
     temporaryDirectories.push(fixture.baseDir)
-    const fifoDirectory = getTeamFifoDirectory(fixture.teamRunId)
     await updateMemberStatuses(fixture.teamRunId, fixture.config, {
       "member-a": "shutdown_approved",
       "member-b": "shutdown_approved",
@@ -140,8 +138,6 @@ describe("team-runtime shutdown", () => {
     await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
       await mkdir(worktreePath, { recursive: true })
     }))
-    await mkdir(fifoDirectory, { recursive: true })
-
     // when
     const result = await deleteTeam(fixture.teamRunId, fixture.config)
 
@@ -154,10 +150,6 @@ describe("team-runtime shutdown", () => {
         () => undefined,
       )
     }))
-    await access(fifoDirectory).then(
-      () => { throw new Error(`expected ${fifoDirectory} to be removed`) },
-      () => undefined,
-    )
     const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
     await access(runtimeStateDirectory).then(
       () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },

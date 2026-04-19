@@ -1,10 +1,7 @@
-import { rm } from "node:fs/promises"
-
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { canVisualize, removeTeamLayout } from "../team-layout-tmux/layout"
-import { getTeamFifoDirectory } from "../team-layout-tmux/fifo-path"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { RuntimeState } from "../types"
@@ -56,7 +53,6 @@ export async function deleteTeam(
     await removeTeamLayout(teamRunId, tmuxMgr)
   }
 
-  await rm(getTeamFifoDirectory(teamRunId), { recursive: true, force: true })
   const removedWorktrees = await removeWorktrees(nonLeadMembers.map((member) => member.worktreePath))
 
   if (runtimeState.status !== "deleted") {

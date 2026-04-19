@@ -145,18 +145,6 @@ describe("team-layout-tmux", () => {
     expect(counts["m2"]).toBe(2)
   })
 
-  test("result does not include fifoByMember", async () => {
-    // given
-    const members = [{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" }]
-
-    // when
-    const result = await createTeamLayout("run-no-fifo", members, tmuxMgr as never)
-
-    // then
-    expect(result).not.toBeNull()
-    expect(Object.keys(result ?? {})).not.toContain("fifoByMember")
-  })
-
   test("cleans up the tmux session on removeTeamLayout", async () => {
     // given
     runTmuxCommandMock.mockImplementationOnce(() => Promise.resolve({ success: false, output: "no such session" }))
