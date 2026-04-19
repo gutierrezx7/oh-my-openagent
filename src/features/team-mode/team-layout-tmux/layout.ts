@@ -5,7 +5,7 @@ import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { runTmuxCommand } from "./tmux-runner"
 
-type TeamLayoutMember = { name: string; sessionId: string; color?: string; worktreePath?: string }
+type TeamLayoutMember = { name: string; sessionId: string; worktreePath?: string }
 
 type TeamLayoutResult = {
   focusWindowId: string
@@ -24,6 +24,7 @@ function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string
   const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
   const escapedSessionId = shellEscapeForDoubleQuotedCommand(member.sessionId)
   const escapedDir = shellEscapeForDoubleQuotedCommand(getPaneWorkingDirectory(member))
+  // Keep each value shell-escaped before nesting it inside the double-quoted -c payload.
   return `${shell} -c "opencode attach '${escapedUrl}' --session '${escapedSessionId}' --dir '${escapedDir}'"`
 }
 
@@ -90,19 +91,33 @@ async function createWindow(
 }
 
 export async function createTeamLayout(teamRunId: string, members: Array<TeamLayoutMember>, tmuxMgr: TmuxSessionManager): Promise<TeamLayoutResult | null> {
-  if (!canVisualize()) { log("tmux visualization unavailable, skipping"); return null }
+  if (!canVisualize()) {
+    log("tmux visualization unavailable, skipping")
+    return null
+  }
   if (members.length === 0) return null
+
   try {
     const serverUrl = tmuxMgr.getServerUrl()
-    if (!(await isServerRunning(serverUrl))) { log("opencode server not reachable, skipping team layout", { serverUrl }); return null }
+    if (!(await isServerRunning(serverUrl))) {
+      log("opencode server not reachable, skipping team layout", { serverUrl })
+      return null
+    }
+
     const tmuxPath = await getTmuxPath()
-    if (!tmuxPath) { log("tmux visualization unavailable, skipping"); return null }
+    if (!tmuxPath) {
+      log("tmux visualization unavailable, skipping")
+      return null
+    }
+
     const sessionName = `omo-team-${teamRunId}`
     const created = await runTmuxCommand(tmuxPath, ["new-session", "-d", "-s", sessionName, "-P", "-F", "#{window_id}"])
     if (!created.success || !created.output) return null
+
     const focus = await createWindow(tmuxPath, sessionName, "focus", "main-vertical", members, serverUrl)
     const grid = await createWindow(tmuxPath, sessionName, "grid", "tiled", members, serverUrl)
     if (!focus || !grid) return null
+
     return {
       focusWindowId: focus.windowId,
       gridWindowId: grid.windowId,

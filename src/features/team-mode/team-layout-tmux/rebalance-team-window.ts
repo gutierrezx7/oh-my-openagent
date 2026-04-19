@@ -37,6 +37,7 @@ export async function rebalanceTeamWindowWith(
     return false
   }
 
+  // tmux applies main-pane-width against the active layout, so select-layout again after resizing.
   const finalLayout = await deps.runTmux(selectLayoutArgs)
   if (!finalLayout.success) {
     deps.log("[rebalanceTeamWindow] FAILED", { windowId, layout, step: "select-layout" })
@@ -63,7 +64,7 @@ export async function rebalanceTeamWindow(
   }
 
   return rebalanceTeamWindowWith(windowId, layout, {
-    runTmux: async (args: string[]): Promise<{ success: boolean }> => runTmuxCommand(tmuxPath, args),
+    runTmux: (args) => runTmuxCommand(tmuxPath, args),
     log,
   })
 }

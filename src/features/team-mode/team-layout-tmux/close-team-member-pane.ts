@@ -2,6 +2,8 @@
 
 import { spawn } from "bun"
 
+const GRACEFUL_CLOSE_DELAY_MS = 250
+
 export type CloseTeamMemberPaneDeps = {
   sendKeys: (paneId: string, keys: string) => Promise<void>
   killPane: (paneId: string) => Promise<{ success: boolean; stderr: string }>
@@ -18,8 +20,9 @@ export async function closeTeamMemberPaneWith(
   }
 
   try {
+    // Interrupt first so panes can exit cleanly before kill-pane races with tmux teardown.
     await deps.sendKeys(paneId, "C-c")
-    await deps.delay(250)
+    await deps.delay(GRACEFUL_CLOSE_DELAY_MS)
 
     const result = await deps.killPane(paneId)
     if (result.success) {
@@ -27,6 +30,7 @@ export async function closeTeamMemberPaneWith(
     }
 
     const trimmedStderr = result.stderr.trim()
+    // A pane that disappears here already honored the graceful close path.
     if (/can't find pane/i.test(trimmedStderr)) {
       return true
     }
@@ -55,7 +59,7 @@ export async function closeTeamMemberPane(paneId: string): Promise<boolean> {
   }
 
   const deps: CloseTeamMemberPaneDeps = {
-    async sendKeys(targetPaneId: string, keys: string): Promise<void> {
+    sendKeys: async (targetPaneId: string, keys: string) => {
       const process = spawn([tmuxPath, "send-keys", "-t", targetPaneId, keys], {
         stdout: "ignore",
         stderr: "ignore",
@@ -63,20 +67,16 @@ export async function closeTeamMemberPane(paneId: string): Promise<boolean> {
 
       await process.exited
     },
-    async killPane(targetPaneId: string): Promise<{ success: boolean; stderr: string }> {
+    killPane: async (targetPaneId: string) => {
       const process = spawn([tmuxPath, "kill-pane", "-t", targetPaneId], {
         stdout: "ignore",
         stderr: "pipe",
       })
       const stderr = process.stderr ? await new Response(process.stderr).text() : ""
       const exitCode = await process.exited
-      return { success: exitCode === 0, stderr: stderr.trim() }
+      return { success: exitCode === 0, stderr }
     },
-    async delay(milliseconds: number): Promise<void> {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, milliseconds)
-      })
-    },
+    delay: (milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
     log,
   }
 

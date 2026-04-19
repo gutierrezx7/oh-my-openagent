@@ -6,11 +6,6 @@ export type TeamSweepDeps = {
 	log: (message: string, meta?: Record<string, unknown>) => void
 }
 
-type TeamSweepRuntimeDeps = {
-	getTmuxPath: () => Promise<string | null>
-	log: TeamSweepDeps["log"]
-}
-
 function getErrorMessage(error: unknown): string {
 	if (error instanceof Error) {
 		return error.message
@@ -42,18 +37,6 @@ async function killTeamSessionViaTmux(tmuxPath: string, sessionName: string): Pr
 	}
 }
 
-async function buildRuntimeDeps(): Promise<TeamSweepRuntimeDeps> {
-	const [{ log }, { getTmuxPath }] = await Promise.all([
-		import("../../../shared"),
-		import("../../../tools/interactive-bash/tmux-path-resolver"),
-	])
-
-	return {
-		getTmuxPath,
-		log,
-	}
-}
-
 export async function sweepStaleTeamSessionsWith(
 	activeTeamRunIds: ReadonlySet<string>,
 	deps: TeamSweepDeps,
@@ -72,8 +55,8 @@ export async function sweepStaleTeamSessionsWith(
 	const killedSessionNames: string[] = []
 
 	for (const sessionName of candidateSessions) {
-		const patternMatch = sessionName.match(TEAM_SESSION_PATTERN)
-		const teamRunId = patternMatch?.[1]
+		// Only the dedicated omo-team-* session namespace maps back to team run ids.
+		const teamRunId = sessionName.match(TEAM_SESSION_PATTERN)?.[1]
 
 		if (!teamRunId) {
 			continue
@@ -99,8 +82,11 @@ export async function sweepStaleTeamSessionsWith(
 }
 
 export async function sweepStaleTeamSessions(activeTeamRunIds: ReadonlySet<string>): Promise<string[]> {
-	const runtimeDeps = await buildRuntimeDeps()
-	const tmuxPath = await runtimeDeps.getTmuxPath()
+	const [{ log }, { getTmuxPath }] = await Promise.all([
+		import("../../../shared"),
+		import("../../../tools/interactive-bash/tmux-path-resolver"),
+	])
+	const tmuxPath = await getTmuxPath()
 
 	if (!tmuxPath) {
 		return []
@@ -109,6 +95,6 @@ export async function sweepStaleTeamSessions(activeTeamRunIds: ReadonlySet<strin
 	return sweepStaleTeamSessionsWith(activeTeamRunIds, {
 		listCandidates: () => listTeamSessionsViaTmux(tmuxPath),
 		killSession: (sessionName) => killTeamSessionViaTmux(tmuxPath, sessionName),
-		log: runtimeDeps.log,
+		log,
 	})
 }

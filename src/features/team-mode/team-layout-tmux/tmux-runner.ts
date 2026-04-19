@@ -72,18 +72,21 @@ async function runTmuxCommandOnce(tmuxPath: string, args: Array<string>, timeout
 
 export async function runTmuxCommand(tmuxPath: string, args: string[], options: RunTmuxOptions = {}): Promise<TmuxCommandResult> {
   const retryCount = Math.max(0, options.retry ?? 0)
+  let lastResult = createTmuxCommandResult("", "", 1)
 
   for (let attempt = 0; attempt <= retryCount; attempt += 1) {
     const result = await runTmuxCommandOnce(tmuxPath, args, options.timeoutMs)
+    lastResult = result
 
     if (result.exitCode === 0) {
       return result
     }
 
+    // Pane and session targets can disappear between tmux commands. Retrying terminal errors only adds delay.
     if (attempt === retryCount || isTerminalTmuxError(result.stderr)) {
       return result
     }
   }
 
-  return createTmuxCommandResult("", "", 1)
+  return lastResult
 }
