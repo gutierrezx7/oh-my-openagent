@@ -1,5 +1,4 @@
 import { log } from "../../../shared"
-import { shellEscapeForDoubleQuotedCommand } from "../../../shared/shell-env"
 import { isServerRunning } from "../../../shared/tmux"
 import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
@@ -19,13 +18,25 @@ function getPaneWorkingDirectory(member: TeamLayoutMember): string {
   return member.worktreePath ?? process.cwd()
 }
 
+function shellSingleQuote(value: string): string {
+  // POSIX-safe single-quote wrap: any internal single quote is closed, literal-quoted, reopened.
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
 function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string {
-  const shell = process.env.SHELL || "/bin/sh"
-  const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
-  const escapedSessionId = shellEscapeForDoubleQuotedCommand(member.sessionId)
-  const escapedDir = shellEscapeForDoubleQuotedCommand(getPaneWorkingDirectory(member))
-  // Keep each value shell-escaped before nesting it inside the double-quoted -c payload.
-  return `${shell} -c "opencode attach '${escapedUrl}' --session '${escapedSessionId}' --dir '${escapedDir}'"`
+  // Single positional passed directly to tmux's default shell. Tmux parses the line
+  // into argv for opencode. Avoiding a sh -c wrapper keeps the TTY signal path
+  // clean so attach-mode streams and Ctrl-C propagate without nested-shell lag.
+  const parts = [
+    "opencode",
+    "attach",
+    shellSingleQuote(serverUrl),
+    "--session",
+    shellSingleQuote(member.sessionId),
+    "--dir",
+    shellSingleQuote(getPaneWorkingDirectory(member)),
+  ]
+  return parts.join(" ")
 }
 
 async function createWindow(
