@@ -9,9 +9,11 @@ import path from "node:path"
 import { type ToolContext } from "@opencode-ai/plugin/tool"
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
+import { listUnreadMessages } from "../team-mailbox/inbox"
 import { BroadcastNotPermittedError } from "../team-mailbox/send"
 import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
 import { createRuntimeState, saveRuntimeState } from "../team-state-store/store"
+import type { Message } from "../types"
 import { MessageSchema } from "../types"
 import { createTeamSendMessageTool } from "./messaging"
 
@@ -234,8 +236,32 @@ describe("createTeamSendMessageTool", () => {
 
     // then
     const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2")
-    const inboxEntries = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json"))
+    const inboxEntries = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
     expect(inboxEntries).toHaveLength(1)
+  })
+
+  test("reserves the message during live delivery so concurrent listings cannot surface it", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    let unreadDuringDelivery: Message[] = []
+    const reservingClient = {
+      session: {
+        promptAsync: async () => {
+          unreadDuringDelivery = await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)
+        },
+      },
+    } as unknown as OpencodeClient
+    const liveTool = createTeamSendMessageTool(fixture.config, reservingClient)
+
+    // when
+    await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "m2",
+      body: "ping",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+
+    // then
+    expect(unreadDuringDelivery).toHaveLength(0)
   })
 
   test("rejects shutdown_request kind", async () => {

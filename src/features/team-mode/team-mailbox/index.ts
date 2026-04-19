@@ -9,3 +9,9 @@ export { listUnreadMessages } from "./inbox"
 export { pollAndBuildInjection } from "./poll"
 export type { InjectionResult } from "./poll"
 export { ackMessages } from "./ack"
+export {
+  reserveMessageForDelivery,
+  commitDeliveryReservation,
+  releaseDeliveryReservation,
+} from "./reservation"
+export type { DeliveryReservation } from "./reservation"

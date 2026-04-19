@@ -6,8 +6,12 @@ import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { log } from "../../../shared/logger"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import { listActiveTeams, loadRuntimeState } from "../team-state-store/store"
-import { ackMessages } from "../team-mailbox/ack"
 import { buildEnvelope } from "../team-mailbox/poll"
+import {
+  commitDeliveryReservation,
+  releaseDeliveryReservation,
+  reserveMessageForDelivery,
+} from "../team-mailbox/reservation"
 import { BroadcastNotPermittedError, sendMessage } from "../team-mailbox/send"
 
 import type { Message } from "../types"
@@ -68,20 +72,34 @@ async function deliverLive(
     const recipientSessionId = recipientMember?.sessionId
     if (!recipientSessionId) continue
 
+    // Reserve the inbox file before delivering so the transform-hook fallback
+    // cannot re-read the same message while promptAsync is in flight.
+    const reservation = await reserveMessageForDelivery(teamRunId, recipientName, message.messageId, config)
+    if (reservation === null) continue
+
     try {
       await client.session.promptAsync({
         path: { id: recipientSessionId },
         body: { parts: [{ type: "text", text: envelope }] },
       })
-      // Live delivery wins; ack so the transform-hook fallback does not re-inject the same message.
-      await ackMessages(teamRunId, recipientName, [message.messageId], config)
+      await commitDeliveryReservation(reservation)
     } catch (error) {
-      log("[team-mailbox] live delivery failed, inbox fallback remains", {
+      log("[team-mailbox] live delivery failed, restoring inbox entry", {
         error: error instanceof Error ? error.message : String(error),
         teamRunId,
         recipient: recipientName,
         messageId: message.messageId,
       })
+      try {
+        await releaseDeliveryReservation(reservation)
+      } catch (releaseError) {
+        log("[team-mailbox] failed to release delivery reservation", {
+          error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+          teamRunId,
+          recipient: recipientName,
+          messageId: message.messageId,
+        })
+      }
     }
   }
 }
