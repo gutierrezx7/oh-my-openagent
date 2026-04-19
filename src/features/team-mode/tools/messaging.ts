@@ -147,9 +147,17 @@ export function createTeamSendMessageTool(config: TeamModeConfig, client: Openco
         throw new BroadcastNotPermittedError()
       }
 
+      const runtimeState = await loadRuntimeState(teamRuntime.teamRunId, config)
+      const reservedRecipients = new Set<string>(
+        runtimeState.members
+          .filter((member) => member.sessionId !== undefined && member.name !== teamRuntime.senderName)
+          .map((member) => member.name),
+      )
+
       const result = await sendMessage(message, teamRuntime.teamRunId, config, {
         isLead: teamRuntime.isLead,
         activeMembers: teamRuntime.activeMembers,
+        reservedRecipients,
       })
 
       await deliverLive(client, message, teamRuntime.teamRunId, result.deliveredTo, config)

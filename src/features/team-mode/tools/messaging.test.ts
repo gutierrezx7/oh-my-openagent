@@ -293,6 +293,36 @@ describe("createTeamSendMessageTool", () => {
     expect(unreadDuringDelivery).toHaveLength(0)
   })
 
+  test("hides the message from the inbox from the moment it is written for a live recipient", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { sendMessage } = await import("../team-mailbox/send")
+    const messageId = randomUUID()
+
+    // when
+    await sendMessage({
+      version: 1,
+      messageId,
+      from: "m1",
+      to: "m2",
+      kind: "message",
+      body: "ping",
+      timestamp: Date.now(),
+    }, fixture.teamRunId, fixture.config, {
+      isLead: false,
+      activeMembers: ["m2"],
+      reservedRecipients: new Set(["m2"]),
+    })
+    const unreadImmediately = await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)
+    const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2")
+    const rawEntries = (await readdir(inboxDir))
+      .filter((entry) => entry.endsWith(".json"))
+
+    // then
+    expect(unreadImmediately).toHaveLength(0)
+    expect(rawEntries).toEqual([`.delivering-${messageId}.json`])
+  })
+
   test("rejects shutdown_request kind", async () => {
     // given
     const fixture = await createTeamFixture()

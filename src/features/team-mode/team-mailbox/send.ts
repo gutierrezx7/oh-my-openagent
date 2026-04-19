@@ -11,6 +11,7 @@ import type { Message } from "../types"
 type SendContext = {
   isLead: boolean
   activeMembers: string[]
+  reservedRecipients?: ReadonlySet<string>
 }
 
 export class BroadcastNotPermittedError extends Error {
@@ -136,6 +137,7 @@ export async function sendMessage(
 
   const baseDir = resolveBaseDir(config)
   const deliveredTo: string[] = []
+  const reservedRecipients = context.reservedRecipients ?? new Set<string>()
 
   for (const recipient of resolveRecipients(message, context)) {
     const inboxDir = getInboxDir(baseDir, teamRunId, recipient)
@@ -148,12 +150,14 @@ export async function sendMessage(
         throw new RecipientBackpressureError()
       }
 
-      const messagePath = path.join(inboxDir, `${message.messageId}.json`)
-      if (await fileExists(messagePath)) {
+      const unreservedPath = path.join(inboxDir, `${message.messageId}.json`)
+      const reservedPath = path.join(inboxDir, `.delivering-${message.messageId}.json`)
+      if (await fileExists(unreservedPath) || await fileExists(reservedPath)) {
         throw new DuplicateMessageIdError()
       }
 
-      await atomicWrite(messagePath, serializedMessage)
+      const targetPath = reservedRecipients.has(recipient) ? reservedPath : unreservedPath
+      await atomicWrite(targetPath, serializedMessage)
       deliveredTo.push(recipient)
     }, { ownerTag: `team-mailbox:${recipient}` })
   }
