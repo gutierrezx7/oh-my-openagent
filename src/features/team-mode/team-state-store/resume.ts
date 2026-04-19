@@ -3,11 +3,13 @@ import { rm, stat } from "node:fs/promises"
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { log } from "../../../shared/logger"
 import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
+import { reclaimStaleReservations } from "../team-mailbox/reservation"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import type { RuntimeState } from "../types"
 import { listActiveTeams, loadRuntimeState, transitionRuntimeState } from "./store"
 
 const CREATING_TIMEOUT_MS = 30 * 60 * 1000
+const STALE_RESERVATION_TTL_MS = 10 * 60 * 1000
 
 export interface ResumeReport {
   resumed: number
@@ -148,6 +150,19 @@ export async function resumeAllTeams(
             report.marked_orphaned += 1
             break
           }
+
+          await Promise.all(runtimeState.members.map(async (member) => {
+            try {
+              await reclaimStaleReservations(runtimeState.teamRunId, member.name, config, STALE_RESERVATION_TTL_MS)
+            } catch (reclaimError) {
+              log("team mailbox reservation reclaim failed", {
+                event: "team-mailbox-reclaim-failed",
+                teamRunId: runtimeState.teamRunId,
+                member: member.name,
+                error: reclaimError instanceof Error ? reclaimError.message : String(reclaimError),
+              })
+            }
+          }))
 
           const workerCheckResults = await inspectWorkerMembers(ctx, runtimeState)
           const deadWorkerNames = new Set(

@@ -2,13 +2,14 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, rm, stat } from "node:fs/promises"
+import { mkdtemp, mkdir, readdir, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { ExecutorContext } from "../../../tools/delegate-task/executor-types"
+import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
 import type { TeamSpec } from "../types"
 import { resumeAllTeams } from "./resume"
 import { createRuntimeState, loadRuntimeState, saveRuntimeState, transitionRuntimeState } from "./store"
@@ -252,6 +253,68 @@ describe("resumeAllTeams", () => {
     expect(workerB?.sessionId).toBe("ses_alive_b")
     expect(report.resumed).toBe(1)
     expect(report.marked_orphaned).toBe(0)
+  })
+
+  test("reclaims stale .delivering-* reservations on resume of an active team", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const runtimeState = await createRuntimeState(createSpec(), "ses_alive", "user", config)
+    await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
+      ...currentRuntimeState,
+      status: "active",
+    }), config)
+    const workerInbox = getInboxDir(resolveBaseDir(config), runtimeState.teamRunId, "worker")
+    await mkdir(workerInbox, { recursive: true, mode: 0o700 })
+    const strandedMessageId = randomUUID()
+    const strandedPath = path.join(workerInbox, `.delivering-${strandedMessageId}.json`)
+    await writeFile(strandedPath, JSON.stringify({
+      version: 1,
+      messageId: strandedMessageId,
+      from: "lead",
+      to: "worker",
+      kind: "message",
+      body: "stranded",
+      timestamp: Date.now(),
+    }))
+    const ancientMtime = new Date(Date.now() - 60 * 60 * 1000)
+    await utimes(strandedPath, ancientMtime, ancientMtime)
+    const sessionGet = mock(async () => ({ data: { id: "ses_alive" } }))
+
+    // when
+    await resumeAllTeams(createExecutorContext(baseDir, sessionGet), config)
+
+    // then
+    const entries = await readdir(workerInbox)
+    expect(entries).toContain(`${strandedMessageId}.json`)
+    expect(entries).not.toContain(`.delivering-${strandedMessageId}.json`)
+  })
+
+  test("leaves fresh .delivering-* reservations in place on resume", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const runtimeState = await createRuntimeState(createSpec(), "ses_alive", "user", config)
+    await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
+      ...currentRuntimeState,
+      status: "active",
+    }), config)
+    const workerInbox = getInboxDir(resolveBaseDir(config), runtimeState.teamRunId, "worker")
+    await mkdir(workerInbox, { recursive: true, mode: 0o700 })
+    const freshMessageId = randomUUID()
+    const freshPath = path.join(workerInbox, `.delivering-${freshMessageId}.json`)
+    await writeFile(freshPath, "{}")
+    const sessionGet = mock(async () => ({ data: { id: "ses_alive" } }))
+
+    // when
+    await resumeAllTeams(createExecutorContext(baseDir, sessionGet), config)
+
+    // then
+    const entries = await readdir(workerInbox)
+    expect(entries).toContain(`.delivering-${freshMessageId}.json`)
+    expect(entries).not.toContain(`${freshMessageId}.json`)
   })
 
   test("orphans active teams when every worker session has died", async () => {

@@ -13,5 +13,6 @@ export {
   reserveMessageForDelivery,
   commitDeliveryReservation,
   releaseDeliveryReservation,
+  reclaimStaleReservations,
 } from "./reservation"
 export type { DeliveryReservation } from "./reservation"
