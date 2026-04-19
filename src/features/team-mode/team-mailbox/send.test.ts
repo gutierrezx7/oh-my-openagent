@@ -105,6 +105,32 @@ describe("sendMessage", () => {
     }
   })
 
+  test("counts in-flight .delivering-* reservations toward recipient backpressure", async () => {
+    // given
+    const baseDir = await createBaseDirectory()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const inboxDir = getInboxDir(resolveBaseDir(config), teamRunId, "m1")
+    await mkdir(inboxDir, { recursive: true })
+    const pendingMessageId = randomUUID()
+    await writeFile(
+      path.join(inboxDir, `.delivering-${pendingMessageId}.json`),
+      "x".repeat(config.recipient_unread_max_bytes + 1),
+      { flag: "w" },
+    )
+
+    // when
+    const result = sendMessage(createMessage(), teamRunId, config, { isLead: false, activeMembers: ["m1"] })
+
+    // then
+    try {
+      await result
+      throw new Error("expected sendMessage to reject")
+    } catch (error) {
+      expect(error).toBeInstanceOf(RecipientBackpressureError)
+    }
+  })
+
   test("rejects duplicate message ids for the same recipient", async () => {
     // given
     const baseDir = await createBaseDirectory()

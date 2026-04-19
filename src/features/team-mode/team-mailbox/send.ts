@@ -82,11 +82,11 @@ function resolveRecipients(message: Message, context: SendContext): string[] {
 async function getUnreadSizeBytes(inboxDir: string): Promise<number> {
   try {
     const directoryEntries = await readdir(inboxDir, { withFileTypes: true })
-    const unreadEntries = directoryEntries.filter((entry) => (
-      entry.isFile()
-      && entry.name.endsWith(".json")
-      && !entry.name.startsWith(".")
-    ))
+    const unreadEntries = directoryEntries.filter((entry) => {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) return false
+      if (entry.name.startsWith(".delivering-")) return true
+      return !entry.name.startsWith(".")
+    })
 
     const sizes = await Promise.all(unreadEntries.map(async (entry) => {
       const fileStats = await stat(path.join(inboxDir, entry.name))
