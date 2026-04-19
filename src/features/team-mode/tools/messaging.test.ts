@@ -15,6 +15,24 @@ import { createRuntimeState, saveRuntimeState } from "../team-state-store/store"
 import { MessageSchema } from "../types"
 import { createTeamSendMessageTool } from "./messaging"
 
+type PromptAsyncCall = {
+  sessionId: string
+  parts: Array<{ type: string; text?: string }>
+}
+
+function createRecordingClient(): { client: OpencodeClient; calls: PromptAsyncCall[] } {
+  const calls: PromptAsyncCall[] = []
+  const client = {
+    session: {
+      promptAsync: async (input: { path: { id: string }; body: { parts: Array<{ type: string; text?: string }> } }) => {
+        calls.push({ sessionId: input.path.id, parts: input.body.parts })
+        return undefined
+      },
+    },
+  } as unknown as OpencodeClient
+  return { client, calls }
+}
+
 const mockClient = {} as OpencodeClient
 
 async function createFixtureBaseDir(): Promise<string> {
@@ -129,6 +147,95 @@ describe("createTeamSendMessageTool", () => {
     const memberTwoInbox = await readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2"))
     expect(memberOneInbox.filter((entry) => entry.endsWith(".json"))).toHaveLength(1)
     expect(memberTwoInbox.filter((entry) => entry.endsWith(".json"))).toHaveLength(1)
+  })
+
+  test("live-delivers the envelope via promptAsync to the recipient session", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { client, calls } = createRecordingClient()
+    const liveTool = createTeamSendMessageTool(fixture.config, client)
+
+    // when
+    await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "m2",
+      body: "ping",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+
+    // then
+    expect(calls).toHaveLength(1)
+    expect(calls[0].sessionId).toBe(fixture.memberTwoSessionId)
+    const envelopeText = calls[0].parts[0]?.text ?? ""
+    expect(envelopeText).toContain("<peer_message")
+    expect(envelopeText).toContain('from="m1"')
+    expect(envelopeText).toContain("ping")
+  })
+
+  test("acks the message after live delivery so the transform hook does not redeliver", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { client } = createRecordingClient()
+    const liveTool = createTeamSendMessageTool(fixture.config, client)
+
+    // when
+    await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "m2",
+      body: "ping",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+
+    // then
+    const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2")
+    const inboxEntries = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json"))
+    const processedEntries = (await readdir(path.join(inboxDir, "processed"))).filter((entry) => entry.endsWith(".json"))
+    expect(inboxEntries).toHaveLength(0)
+    expect(processedEntries).toHaveLength(1)
+  })
+
+  test("broadcast fans out live delivery to every active member with a session", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { client, calls } = createRecordingClient()
+    const liveTool = createTeamSendMessageTool(fixture.config, client)
+
+    // when
+    await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "*",
+      body: "broadcast ping",
+      kind: "announcement",
+    }, fixture.toolContext(fixture.leadSessionId))
+
+    // then
+    const targetedSessionIds = calls.map((entry) => entry.sessionId).sort()
+    expect(targetedSessionIds).toEqual([
+      fixture.leadSessionId,
+      fixture.memberOneSessionId,
+      fixture.memberTwoSessionId,
+    ].sort())
+  })
+
+  test("inbox stays intact when live delivery fails so the fallback path still works", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const failingClient = {
+      session: {
+        promptAsync: async () => { throw new Error("network down") },
+      },
+    } as unknown as OpencodeClient
+    const liveTool = createTeamSendMessageTool(fixture.config, failingClient)
+
+    // when
+    await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "m2",
+      body: "ping",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+
+    // then
+    const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2")
+    const inboxEntries = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json"))
+    expect(inboxEntries).toHaveLength(1)
   })
 
   test("rejects shutdown_request kind", async () => {

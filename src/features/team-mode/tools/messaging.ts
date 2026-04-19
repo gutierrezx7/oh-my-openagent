@@ -3,10 +3,14 @@ import { randomUUID } from "node:crypto"
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import { log } from "../../../shared/logger"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import { listActiveTeams, loadRuntimeState } from "../team-state-store/store"
+import { ackMessages } from "../team-mailbox/ack"
+import { buildEnvelope } from "../team-mailbox/poll"
 import { BroadcastNotPermittedError, sendMessage } from "../team-mailbox/send"
 
+import type { Message } from "../types"
 import { MessageSchema } from "../types"
 
 const MESSAGE_TOOL_KINDS = ["message", "announcement"] as const
@@ -49,9 +53,40 @@ async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, c
   }
 }
 
-export function createTeamSendMessageTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
-  void client
+async function deliverLive(
+  client: OpencodeClient,
+  message: Message,
+  teamRunId: string,
+  deliveredTo: readonly string[],
+  config: TeamModeConfig,
+): Promise<void> {
+  const runtimeState = await loadRuntimeState(teamRunId, config)
+  const envelope = buildEnvelope(message)
 
+  for (const recipientName of deliveredTo) {
+    const recipientMember = runtimeState.members.find((entry) => entry.name === recipientName)
+    const recipientSessionId = recipientMember?.sessionId
+    if (!recipientSessionId) continue
+
+    try {
+      await client.session.promptAsync({
+        path: { id: recipientSessionId },
+        body: { parts: [{ type: "text", text: envelope }] },
+      })
+      // Live delivery wins; ack so the transform-hook fallback does not re-inject the same message.
+      await ackMessages(teamRunId, recipientName, [message.messageId], config)
+    } catch (error) {
+      log("[team-mailbox] live delivery failed, inbox fallback remains", {
+        error: error instanceof Error ? error.message : String(error),
+        teamRunId,
+        recipient: recipientName,
+        messageId: message.messageId,
+      })
+    }
+  }
+}
+
+export function createTeamSendMessageTool(config: TeamModeConfig, client: OpencodeClient): ToolDefinition {
   return tool({
     description: "Send a message to a team member or broadcast to the team.",
     args: {
@@ -97,6 +132,8 @@ export function createTeamSendMessageTool(config: TeamModeConfig, client: Openco
         isLead: teamRuntime.isLead,
         activeMembers: teamRuntime.activeMembers,
       })
+
+      await deliverLive(client, message, teamRuntime.teamRunId, result.deliveredTo, config)
 
       return JSON.stringify(result)
     },

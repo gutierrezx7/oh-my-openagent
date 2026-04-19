@@ -19,7 +19,7 @@ function escapeAttributeValue(value: string): string {
     .replaceAll("'", "&apos;")
 }
 
-function buildEnvelope(message: Message): string {
+export function buildEnvelope(message: Message): string {
   const attributes = [
     `from="${escapeAttributeValue(message.from)}"`,
     `timestamp="${escapeAttributeValue(String(message.timestamp))}"`,
