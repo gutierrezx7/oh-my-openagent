@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs"
 import { mkdir, readdir, rename, stat } from "node:fs/promises"
 import path from "node:path"
 
@@ -72,7 +73,7 @@ export async function reclaimStaleReservations(
   const cutoff = Date.now() - staleTtlMs
   const reclaimedIds: string[] = []
 
-  let entries: Awaited<ReturnType<typeof readdir>>
+  let entries: Dirent[]
   try {
     entries = await readdir(inboxDir, { withFileTypes: true })
   } catch (error) {
