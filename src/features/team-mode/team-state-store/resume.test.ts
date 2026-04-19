@@ -56,6 +56,43 @@ function createSpec(name = `team-${randomUUID().slice(0, 8)}`): TeamSpec {
   }
 }
 
+function createSpecWithTwoWorkers(name = `team-${randomUUID().slice(0, 8)}`): TeamSpec {
+  return {
+    version: 1,
+    name,
+    createdAt: Date.now(),
+    leadAgentId: "lead",
+    members: [
+      {
+        kind: "subagent_type",
+        name: "lead",
+        subagent_type: "sisyphus",
+        backendType: "in-process",
+        isActive: true,
+        color: "red",
+      },
+      {
+        kind: "category",
+        name: "worker-a",
+        category: "deep",
+        prompt: "implement task",
+        backendType: "in-process",
+        isActive: true,
+        color: "blue",
+      },
+      {
+        kind: "category",
+        name: "worker-b",
+        category: "deep",
+        prompt: "implement task",
+        backendType: "in-process",
+        isActive: true,
+        color: "green",
+      },
+    ],
+  }
+}
+
 type SessionGetMock = (input: { path: { id: string } }) => Promise<unknown>
 
 function createExecutorContext(
@@ -177,5 +214,76 @@ describe("resumeAllTeams", () => {
       cleaned: 0,
       errors: [],
     })
+  })
+
+  test("marks dead worker members errored while keeping the team active", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const runtimeState = await createRuntimeState(createSpecWithTwoWorkers(), "ses_alive_lead", "user", config)
+    await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
+      ...currentRuntimeState,
+      status: "active",
+      leadSessionId: "ses_alive_lead",
+      members: currentRuntimeState.members.map((member) => {
+        if (member.name === "lead") return { ...member, sessionId: "ses_alive_lead", status: "running" as const }
+        if (member.name === "worker-a") return { ...member, sessionId: "ses_dead_a", status: "running" as const }
+        if (member.name === "worker-b") return { ...member, sessionId: "ses_alive_b", status: "running" as const }
+        return member
+      }),
+    }), config)
+    const sessionGet = mock(async ({ path }: { path: { id: string } }) => {
+      if (path.id === "ses_alive_lead" || path.id === "ses_alive_b") return { data: { id: path.id } }
+      throw Object.assign(new Error("session not found"), { status: 404 })
+    })
+
+    // when
+    const report = await resumeAllTeams(createExecutorContext(baseDir, sessionGet), config)
+    const persistedState = await loadRuntimeState(runtimeState.teamRunId, config)
+
+    // then
+    expect(persistedState.status).toBe("active")
+    const workerA = persistedState.members.find((member) => member.name === "worker-a")
+    const workerB = persistedState.members.find((member) => member.name === "worker-b")
+    expect(workerA?.status).toBe("errored")
+    expect(workerA?.sessionId).toBeUndefined()
+    expect(workerB?.status).toBe("running")
+    expect(workerB?.sessionId).toBe("ses_alive_b")
+    expect(report.resumed).toBe(1)
+    expect(report.marked_orphaned).toBe(0)
+  })
+
+  test("orphans active teams when every worker session has died", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const runtimeState = await createRuntimeState(createSpec(), "ses_alive_lead", "user", config)
+    await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
+      ...currentRuntimeState,
+      status: "active",
+      leadSessionId: "ses_alive_lead",
+      members: currentRuntimeState.members.map((member) => {
+        if (member.name === "lead") return { ...member, sessionId: "ses_alive_lead", status: "running" as const }
+        return { ...member, sessionId: "ses_dead_worker", status: "running" as const }
+      }),
+    }), config)
+    const sessionGet = mock(async ({ path }: { path: { id: string } }) => {
+      if (path.id === "ses_alive_lead") return { data: { id: path.id } }
+      throw Object.assign(new Error("session not found"), { status: 404 })
+    })
+
+    // when
+    const report = await resumeAllTeams(createExecutorContext(baseDir, sessionGet), config)
+    const persistedState = await loadRuntimeState(runtimeState.teamRunId, config)
+
+    // then
+    expect(persistedState.status).toBe("orphaned")
+    const worker = persistedState.members.find((member) => member.name === "worker")
+    expect(worker?.status).toBe("errored")
+    expect(worker?.sessionId).toBeUndefined()
+    expect(report.resumed).toBe(0)
+    expect(report.marked_orphaned).toBe(1)
   })
 })

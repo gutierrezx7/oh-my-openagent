@@ -64,12 +64,12 @@ async function cleanupMemberWorktrees(runtimeState: RuntimeState): Promise<void>
   }))
 }
 
-async function leadSessionExists(
+async function sessionExists(
   ctx: ExecutorContext,
-  leadSessionId: string,
+  sessionId: string,
 ): Promise<boolean> {
   try {
-    const response = await ctx.client.session.get({ path: { id: leadSessionId } })
+    const response = await ctx.client.session.get({ path: { id: sessionId } })
 
     if (response.error != null) {
       if (isSessionNotFoundError(response.error)) return false
@@ -85,6 +85,28 @@ async function leadSessionExists(
 
 function isCreatingStateStuck(runtimeState: RuntimeState, now: number): boolean {
   return runtimeState.status === "creating" && now - runtimeState.createdAt > CREATING_TIMEOUT_MS
+}
+
+interface WorkerLiveness {
+  readonly name: string
+  readonly wasSpawned: boolean
+  readonly stillAlive: boolean
+}
+
+async function inspectWorkerMembers(
+  ctx: ExecutorContext,
+  runtimeState: RuntimeState,
+): Promise<WorkerLiveness[]> {
+  const workerMembers = runtimeState.members.filter((member) => member.agentType !== "leader")
+
+  return await Promise.all(workerMembers.map(async (member) => {
+    if (member.sessionId === undefined) {
+      return { name: member.name, wasSpawned: false, stillAlive: true }
+    }
+
+    const stillAlive = await sessionExists(ctx, member.sessionId)
+    return { name: member.name, wasSpawned: true, stillAlive }
+  }))
 }
 
 export async function resumeAllTeams(
@@ -118,13 +140,44 @@ export async function resumeAllTeams(
         }
 
         case "active": {
-          if (!runtimeState.leadSessionId || !(await leadSessionExists(ctx, runtimeState.leadSessionId))) {
+          if (!runtimeState.leadSessionId || !(await sessionExists(ctx, runtimeState.leadSessionId))) {
             await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
               ...currentRuntimeState,
               status: "orphaned",
             }), config)
             report.marked_orphaned += 1
             break
+          }
+
+          const workerCheckResults = await inspectWorkerMembers(ctx, runtimeState)
+          const deadWorkerNames = new Set(
+            workerCheckResults
+              .filter((result) => result.wasSpawned && !result.stillAlive)
+              .map((result) => result.name),
+          )
+          const hasAliveWorker = workerCheckResults.some((result) => result.stillAlive)
+          const hasAnyWorker = workerCheckResults.length > 0
+
+          const markDeadWorkersErrored = (currentRuntimeState: RuntimeState): RuntimeState => ({
+            ...currentRuntimeState,
+            members: currentRuntimeState.members.map((member) => (
+              deadWorkerNames.has(member.name)
+                ? { ...member, status: "errored" as const, sessionId: undefined }
+                : member
+            )),
+          })
+
+          if (hasAnyWorker && !hasAliveWorker) {
+            await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
+              ...markDeadWorkersErrored(currentRuntimeState),
+              status: "orphaned",
+            }), config)
+            report.marked_orphaned += 1
+            break
+          }
+
+          if (deadWorkerNames.size > 0) {
+            await transitionRuntimeState(runtimeState.teamRunId, markDeadWorkersErrored, config)
           }
 
           report.resumed += 1
