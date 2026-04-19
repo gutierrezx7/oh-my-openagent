@@ -14,12 +14,17 @@ import type { RuntimeState, TeamSpec } from "../types"
 import { activateTeamLayout } from "./activate-team-layout"
 import { cleanupTeamRunResources } from "./cleanup-team-run-resources"
 import { resolveMember } from "./resolve-member"
+import { shouldReuseCallerLeadSession } from "../resolve-caller-team-lead"
 
 const SESSION_ID_POLL_MS = 25
 
 type SpawnedMemberResource = {
   taskId?: string
   worktreePath?: string
+}
+
+type CreateTeamRunOptions = {
+  callerAgentTypeId?: string
 }
 
 export class TeamRunCreateError extends Error {
@@ -101,13 +106,23 @@ export async function createTeamRun(
   config: TeamModeConfig,
   bgMgr: BackgroundManager,
   tmuxMgr?: TmuxSessionManager,
+  options?: CreateTeamRunOptions,
 ): Promise<RuntimeState> {
   const existingRuntime = await findExistingRuntime(spec, leadSessionId, config)
   if (existingRuntime) return existingRuntime
 
   const baseDir = resolveBaseDir(config)
   await ensureBaseDirs(baseDir)
-  const runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
+  const reusesCallerLeadSession = shouldReuseCallerLeadSession(spec, options?.callerAgentTypeId)
+  let runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
+  if (reusesCallerLeadSession) {
+    runtimeState = await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({
+      ...currentState,
+      members: currentState.members.map((member) => member.name === spec.leadAgentId
+        ? { ...member, sessionId: leadSessionId, status: "running" }
+        : member),
+    }), config)
+  }
   await Promise.all(spec.members.map((member) => mkdir(getInboxDir(baseDir, runtimeState.teamRunId, member.name), { recursive: true })))
   await Promise.all(spec.members.map((member) => ensureTeamMemberFifo(runtimeState.teamRunId, member.name)))
 
@@ -135,6 +150,17 @@ export async function createTeamRun(
 
         try {
           if (member.worktreePath) resource.worktreePath = await createMemberWorktree(member.worktreePath, ctx.directory)
+          if (reusesCallerLeadSession && member.name === spec.leadAgentId) {
+            if (resource.worktreePath) {
+              await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({
+                ...currentState,
+                members: currentState.members.map((currentMember, currentIndex) => currentIndex === memberIndex
+                  ? { ...currentMember, worktreePath: resource.worktreePath }
+                  : currentMember),
+              }), config)
+            }
+            continue
+          }
           const resolvedMember = await resolveMember(member, ctx, categoryExamples, spec.leadAgentId)
           const task = await bgMgr.launch({
             description: `Create team member ${spec.name}/${member.name}`,

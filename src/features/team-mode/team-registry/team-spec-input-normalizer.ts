@@ -1,4 +1,10 @@
+import type { CallerTeamLead } from "../resolve-caller-team-lead"
+
 type JsonRecord = Record<string, unknown>
+
+export type NormalizeTeamSpecInputOptions = {
+  callerTeamLead?: CallerTeamLead
+}
 
 function isJsonRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -67,7 +73,19 @@ function stripMemberLeadFlag(value: unknown): unknown {
   return memberWithoutLeadFlag
 }
 
-export function normalizeTeamSpecInput(raw: unknown): unknown {
+function hasMemberLeadFlag(rawMembers: unknown[]): boolean {
+  return rawMembers.some((member) => isJsonRecord(member) && member.isLead === true)
+}
+
+function createCallerLeadMember(callerAgentTypeId: string): JsonRecord {
+  return {
+    name: "lead",
+    kind: "subagent_type",
+    subagent_type: callerAgentTypeId,
+  }
+}
+
+export function normalizeTeamSpecInput(raw: unknown, options?: NormalizeTeamSpecInputOptions): unknown {
   if (!isJsonRecord(raw)) {
     return raw
   }
@@ -76,6 +94,9 @@ export function normalizeTeamSpecInput(raw: unknown): unknown {
   const rawMembers = raw.members
   const rawLead = raw.lead
   let leadAgentId = typeof raw.leadAgentId === "string" ? raw.leadAgentId : undefined
+  const hasExplicitLead = leadAgentId !== undefined
+    || isJsonRecord(rawLead)
+    || (Array.isArray(rawMembers) && hasMemberLeadFlag(rawMembers))
 
   if (Array.isArray(rawMembers)) {
     let normalizedMembers = rawMembers.map((member) => isJsonRecord(member) ? cloneJsonRecord(member) : member)
@@ -94,6 +115,16 @@ export function normalizeTeamSpecInput(raw: unknown): unknown {
 
       if (leadAgentId === undefined && leadName !== undefined) {
         leadAgentId = leadName
+      }
+    }
+
+    if (!hasExplicitLead) {
+      const callerTeamLead = options?.callerTeamLead
+      if (callerTeamLead?.isEligibleForTeamLead && callerTeamLead.agentTypeId !== undefined) {
+        normalizedMembers = [createCallerLeadMember(callerTeamLead.agentTypeId), ...normalizedMembers]
+        leadAgentId = "lead"
+      } else if (callerTeamLead?.displayName !== undefined) {
+        throw new Error(`Caller agent ${callerTeamLead.displayName} is not eligible as team lead; specify leadAgentId explicitly`)
       }
     }
 

@@ -52,7 +52,15 @@ describe("team lifecycle tools", () => {
 
     // then
     expect(result.teamRunId).toBe("team-run-1")
-    expect(createTeamRunMock).toHaveBeenCalledWith(expect.anything(), "lead-session", expect.objectContaining({ client: mockClient }), config, backgroundManager, undefined)
+    expect(createTeamRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "lead-session",
+      expect.objectContaining({ client: mockClient }),
+      config,
+      backgroundManager,
+      undefined,
+      { callerAgentTypeId: undefined },
+    )
   })
 
   test("team_create returns teamRunId and sanitized runtimeState for inline specs", async () => {
@@ -83,7 +91,15 @@ describe("team lifecycle tools", () => {
     const result = parseToolResult<{ runtimeState: RuntimeState }>(await teamCreateTool.execute({ inline_spec: inlineSpec }, createToolContext("lead-session")))
 
     // then
-    expect(createTeamRunMock).toHaveBeenCalledWith(expect.objectContaining({ leadAgentId: "lead" }), "lead-session", expect.anything(), config, expect.anything(), undefined)
+    expect(createTeamRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({ leadAgentId: "lead" }),
+      "lead-session",
+      expect.anything(),
+      config,
+      expect.anything(),
+      undefined,
+      { callerAgentTypeId: undefined },
+    )
     expect(result.runtimeState.members).toHaveLength(2)
     expect(result.runtimeState.members[0]).toMatchObject({ name: "lead", agentType: "leader" })
   })

@@ -6,6 +6,7 @@ import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
+import { resolveCallerTeamLead } from "../resolve-caller-team-lead"
 import { loadTeamSpec, normalizeTeamSpecInput } from "../team-registry/loader"
 import { validateSpec } from "../team-registry/validator"
 import { createTeamRun } from "../team-runtime/create"
@@ -57,7 +58,10 @@ function sanitizeRuntimeState(runtimeState: RuntimeState): Omit<RuntimeState, "m
   }
 }
 
-function parseInlineTeamSpec(rawSpec: unknown): TeamSpec {
+function parseInlineTeamSpec(
+  rawSpec: unknown,
+  options?: Parameters<typeof normalizeTeamSpecInput>[1],
+): TeamSpec {
   let specObject: unknown = rawSpec
   if (typeof rawSpec === "string") {
     try {
@@ -68,7 +72,7 @@ function parseInlineTeamSpec(rawSpec: unknown): TeamSpec {
     }
   }
 
-  const parsedSpec = TeamSpecSchema.parse(normalizeTeamSpecInput(specObject))
+  const parsedSpec = TeamSpecSchema.parse(normalizeTeamSpecInput(specObject, options))
   validateSpec(parsedSpec)
   return parsedSpec
 }
@@ -106,12 +110,23 @@ export function createTeamCreateTool(
       const leadSessionId = args.leadSessionId ?? runtimeContext.sessionID
       if (!leadSessionId) throw new Error("team_create requires leadSessionId or tool context sessionID")
       const projectRoot = typeof runtimeContext.directory === "string" ? runtimeContext.directory : process.cwd()
-      const spec = args.teamName ? await loadTeamSpec(args.teamName, config, projectRoot) : parseInlineTeamSpec(args.inline_spec)
+      const callerTeamLead = resolveCallerTeamLead(runtimeContext.agent)
+      const spec = args.teamName
+        ? await loadTeamSpec(args.teamName, config, projectRoot, { callerTeamLead })
+        : parseInlineTeamSpec(args.inline_spec, { callerTeamLead })
       const participantRuntime = await findParticipantRuntime(runtimeContext.sessionID, config)
       if (participantRuntime && (participantRuntime.teamName !== spec.name || participantRuntime.leadSessionId !== leadSessionId)) {
         throw new Error(`team_create denied: session is already a participant of team ${participantRuntime.teamRunId}`)
       }
-      const runtimeState = await createTeamRun(spec, leadSessionId, { client, manager: bgMgr, directory: projectRoot }, config, bgMgr, tmuxMgr)
+      const runtimeState = await createTeamRun(
+        spec,
+        leadSessionId,
+        { client, manager: bgMgr, directory: projectRoot },
+        config,
+        bgMgr,
+        tmuxMgr,
+        { callerAgentTypeId: callerTeamLead.agentTypeId },
+      )
       return JSON.stringify({ teamRunId: runtimeState.teamRunId, runtimeState: sanitizeRuntimeState(runtimeState) })
     },
   })

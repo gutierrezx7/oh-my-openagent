@@ -202,4 +202,89 @@ describe("createTeamRun", () => {
     // then
     expect(maxInFlight).toBeLessThanOrEqual(4)
   })
+
+  test("reuses the caller session for the lead when the lead matches the caller agent", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-caller-lead-"))
+    temporaryDirectories.push(baseDir)
+    let launchCount = 0
+    const { manager, launchMock } = createManager(baseDir, async (input) => ({
+      id: `task-${++launchCount}`,
+      sessionID: `${input.agent}-session-${launchCount}`,
+      status: "running",
+    } as BackgroundTask))
+    const spec: TeamSpec = {
+      version: 1,
+      name: "alpha-team",
+      createdAt: Date.now(),
+      leadAgentId: "lead",
+      members: [
+        { kind: "subagent_type", name: "lead", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
+        { kind: "category", name: "member-1", category: "quick", prompt: "prompt-1", backendType: "in-process", isActive: true },
+      ],
+    }
+
+    // when
+    const runtimeState = await createTeamRun(
+      spec,
+      "lead-session",
+      createContext(baseDir, manager),
+      createConfig(baseDir),
+      manager,
+      undefined,
+      { callerAgentTypeId: "sisyphus" },
+    )
+
+    // then
+    expect(launchMock).toHaveBeenCalledTimes(1)
+    expect(launchMock.mock.calls[0]?.[0]).toMatchObject({ description: "Create team member alpha-team/member-1" })
+    expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
+      { name: "lead", sessionId: "lead-session" },
+      { name: "member-1", sessionId: "member-1-agent-session-1" },
+    ])
+  })
+
+  test("still spawns the explicit lead when the caller agent does not match it", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-explicit-lead-"))
+    temporaryDirectories.push(baseDir)
+    let launchCount = 0
+    const { manager, launchMock } = createManager(baseDir, async (input) => ({
+      id: `task-${++launchCount}`,
+      sessionID: `${input.agent}-session-${launchCount}`,
+      status: "running",
+    } as BackgroundTask))
+    const spec: TeamSpec = {
+      version: 1,
+      name: "alpha-team",
+      createdAt: Date.now(),
+      leadAgentId: "captain",
+      members: [
+        { kind: "subagent_type", name: "captain", subagent_type: "atlas", backendType: "in-process", isActive: true },
+        { kind: "category", name: "member-1", category: "quick", prompt: "prompt-1", backendType: "in-process", isActive: true },
+      ],
+    }
+
+    // when
+    const runtimeState = await createTeamRun(
+      spec,
+      "lead-session",
+      createContext(baseDir, manager),
+      createConfig(baseDir),
+      manager,
+      undefined,
+      { callerAgentTypeId: "sisyphus" },
+    )
+
+    // then
+    expect(launchMock).toHaveBeenCalledTimes(2)
+    expect(launchMock.mock.calls.map(([input]) => input.description)).toEqual([
+      "Create team member alpha-team/captain",
+      "Create team member alpha-team/member-1",
+    ])
+    expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
+      { name: "captain", sessionId: "captain-agent-session-1" },
+      { name: "member-1", sessionId: "member-1-agent-session-2" },
+    ])
+  })
 })

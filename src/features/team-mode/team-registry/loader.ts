@@ -4,6 +4,7 @@ import { ZodError } from "zod"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { log } from "../../../shared/logger"
+import type { NormalizeTeamSpecInputOptions } from "./team-spec-input-normalizer"
 import { TeamSpecSchema } from "../types"
 
 import type { TeamSpec } from "../types"
@@ -98,7 +99,10 @@ function createZodValidationError(rawSpec: unknown, error: ZodError): TeamSpecVa
   return new TeamSpecValidationError(message, "INVALID_TEAM_SPEC", field)
 }
 
-async function loadTeamSpecFromEntry(entry: DiscoveredTeamSpec): Promise<TeamSpec> {
+async function loadTeamSpecFromEntry(
+  entry: DiscoveredTeamSpec,
+  options?: NormalizeTeamSpecInputOptions,
+): Promise<TeamSpec> {
   let rawText: string
   try {
     rawText = await readFile(entry.path, "utf8")
@@ -121,7 +125,7 @@ async function loadTeamSpecFromEntry(entry: DiscoveredTeamSpec): Promise<TeamSpe
     )
   }
 
-  const normalizedRawSpec = normalizeTeamSpecInput(rawSpec)
+  const normalizedRawSpec = normalizeTeamSpecInput(rawSpec, options)
   const parsedSpec = TeamSpecSchema.safeParse(normalizedRawSpec)
   if (!parsedSpec.success) {
     throw createZodValidationError(normalizedRawSpec, parsedSpec.error)
@@ -138,6 +142,7 @@ export async function loadTeamSpec(
   teamName: string,
   config: TeamModeConfig,
   projectRoot: string,
+  options?: NormalizeTeamSpecInputOptions,
 ): Promise<TeamSpec> {
   const discoveredTeamSpecs = await discoverTeamSpecs(config, projectRoot)
   const matchedTeamSpec = discoveredTeamSpecs.find((entry) => entry.name === teamName)
@@ -153,7 +158,7 @@ export async function loadTeamSpec(
     )
   }
 
-  return loadTeamSpecFromEntry(matchedTeamSpec)
+  return loadTeamSpecFromEntry(matchedTeamSpec, options)
 }
 
 export async function loadAllTeamSpecs(

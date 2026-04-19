@@ -7,6 +7,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
+import { resolveCallerTeamLead } from "../resolve-caller-team-lead"
 import { loadTeamSpec } from "./loader"
 
 async function createTemporaryRoot(): Promise<string> {
@@ -62,5 +63,31 @@ describe("loadTeamSpec member name normalization", () => {
     // then
     expect(teamSpec.leadAgentId).toBe("lead")
     expect(teamSpec.members.map((member) => member.name)).toEqual(["lead", "quick-1", "deep-1", "deep-2", "atlas-1"])
+  })
+
+  test("injects the caller as lead for preset specs without explicit lead metadata", async () => {
+    // given
+    const rootDirectory = await createTemporaryRoot()
+    temporaryDirectories.push(rootDirectory)
+    const fixturePaths = getFixturePaths(rootDirectory, "caller-lead")
+    await writeJsonFile(fixturePaths.userConfigPath, {
+      name: "caller-lead",
+      members: [
+        { kind: "category", category: "quick", prompt: "Quick scout the workspace structure." },
+        { kind: "subagent_type", subagent_type: "atlas" },
+      ],
+    })
+
+    // when
+    const teamSpec = await loadTeamSpec(
+      "caller-lead",
+      TeamModeConfigSchema.parse({ base_dir: fixturePaths.userBaseDir }),
+      fixturePaths.projectRoot,
+      { callerTeamLead: resolveCallerTeamLead("\u200BSisyphus - Ultraworker") },
+    )
+
+    // then
+    expect(teamSpec.leadAgentId).toBe("lead")
+    expect(teamSpec.members.map((member) => member.name)).toEqual(["lead", "quick-1", "atlas-1"])
   })
 })
