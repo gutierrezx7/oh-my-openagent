@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
-import { createRuntimeState } from "../team-state-store/store"
+import { createRuntimeState, loadRuntimeState } from "../team-state-store/store"
 import type { TeamSpec } from "../types"
 import { sendMessage } from "./send"
 
@@ -143,5 +143,29 @@ describe("pollAndBuildInjection", () => {
     expect(inboxEntries).toContain(`${firstMessageId}.json`)
     expect(inboxEntries).toContain(`${secondMessageId}.json`)
     expect(inboxEntries).not.toContain("processed")
+  })
+
+  test("deduplicates pendingInjectedMessageIds when the same unread message surfaces across turns", async () => {
+    // given
+    const { teamRunId, config } = await setupRuntime(["m1"])
+    const messageId = randomUUID()
+    await sendMessage({
+      version: 1,
+      messageId,
+      from: "lead",
+      to: "m1",
+      kind: "message",
+      body: "persistent",
+      timestamp: 100,
+    }, teamRunId, config, { isLead: true, activeMembers: ["m1"] })
+
+    // when
+    await pollAndBuildInjection("session-1", "m1", teamRunId, config, "turn-A")
+    await pollAndBuildInjection("session-1", "m1", teamRunId, config, "turn-B")
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    const member = runtimeState.members.find((entry) => entry.name === "m1")
+
+    // then
+    expect(member?.pendingInjectedMessageIds).toEqual([messageId])
   })
 })

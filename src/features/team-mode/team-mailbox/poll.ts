@@ -78,7 +78,7 @@ export async function pollAndBuildInjection(
         ? {
           ...member,
           lastInjectedTurnMarker: turnMarker,
-          pendingInjectedMessageIds: [...member.pendingInjectedMessageIds, ...messageIds],
+          pendingInjectedMessageIds: Array.from(new Set([...member.pendingInjectedMessageIds, ...messageIds])),
         }
         : member
     )),
