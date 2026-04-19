@@ -192,6 +192,10 @@ export class TmuxSessionManager {
     return this.sessions.get(sessionId)?.paneId
   }
 
+  getServerUrl(): string {
+    return this.serverUrl
+  }
+
   private removeTrackedSession(sessionId: string): void {
     this.sessions.delete(sessionId)
 

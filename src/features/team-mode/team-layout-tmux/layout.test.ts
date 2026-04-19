@@ -5,8 +5,6 @@ import { beforeEach, describe, expect, mock, test } from "bun:test"
 let nextWindowNumber = 1
 let nextPaneNumber = 1
 
-const ensureTeamMemberFifoMock = mock(async (teamRunId: string, memberName: string) => `/tmp/omo-team/${teamRunId}/${memberName}.fifo`)
-
 const runTmuxCommandMock = mock((_tmuxPath: string, args: Array<string>) => {
   const command = args[0]
 
@@ -25,17 +23,28 @@ const runTmuxCommandMock = mock((_tmuxPath: string, args: Array<string>) => {
   return Promise.resolve({ success: true, output: "" })
 })
 
+const isServerRunningMock = mock(async (_serverUrl: string) => true)
+
 mock.module("./tmux-runner", () => ({ runTmuxCommand: runTmuxCommandMock }))
-mock.module("./ensure-team-member-fifo", () => ({ ensureTeamMemberFifo: ensureTeamMemberFifoMock }))
 mock.module("../../../tools/interactive-bash/tmux-path-resolver", () => ({ getTmuxPath: mock(() => Promise.resolve("tmux")) }))
 mock.module("../../../shared", () => ({ log: mock(() => undefined) }))
+mock.module("../../../shared/tmux", () => ({ isServerRunning: isServerRunningMock }))
 
 import { canVisualize, createTeamLayout, removeTeamLayout } from "./layout"
+
+type TmuxMgrLike = { getServerUrl: () => string }
+
+const tmuxMgr: TmuxMgrLike = { getServerUrl: () => "http://127.0.0.1:12345" }
+
+function getCommands(): Array<Array<string>> {
+  return (runTmuxCommandMock.mock.calls as unknown as Array<[string, Array<string>]>).map((call) => call[1])
+}
 
 describe("team-layout-tmux", () => {
   beforeEach(() => {
     runTmuxCommandMock.mockClear()
-    ensureTeamMemberFifoMock.mockClear()
+    isServerRunningMock.mockClear()
+    isServerRunningMock.mockImplementation(async () => true)
     nextWindowNumber = 1
     nextPaneNumber = 1
     process.env.TMUX = "/tmp/tmux-1"
@@ -46,7 +55,7 @@ describe("team-layout-tmux", () => {
     delete process.env.TMUX
 
     // when
-    const result = await createTeamLayout("run-1", [], {} as never)
+    const result = await createTeamLayout("run-1", [], tmuxMgr as never)
 
     // then
     expect(canVisualize()).toBe(false)
@@ -54,55 +63,122 @@ describe("team-layout-tmux", () => {
     expect(runTmuxCommandMock).toHaveBeenCalledTimes(0)
   })
 
-  test("creates focus and grid windows", async () => {
+  test("returns null when server health check fails", async () => {
     // given
-    const members = [
-      { name: "lead", sessionId: "s1", color: "red", worktreePath: "/tmp/lead" },
-      { name: "m2", sessionId: "s2", worktreePath: "/tmp/m2" },
-      { name: "m3", sessionId: "s3" },
-    ]
+    isServerRunningMock.mockImplementation(async () => false)
 
     // when
-    const result = await createTeamLayout("run-2", members, {} as never)
-
-    // then
-    const commands = (runTmuxCommandMock.mock.calls as unknown as Array<[string, Array<string>]>).map((call) => call[1])
-    expect(commands.flat()).toContain("new-session")
-    expect(commands.flat()).toContain("new-window")
-    expect(commands.flat()).toContain("split-window")
-    expect(commands.flat()).toContain("select-layout")
-    expect(commands.flat()).toContain("select-pane")
-    expect(commands.flat()).toContain("send-keys")
-    expect(commands).toContainEqual(["new-window", "-d", "-P", "-F", "#{window_id} #{pane_id}", "-t", "omo-team-run-2", "-n", "focus", "-c", "/tmp/lead"])
-    expect(commands).toContainEqual(["split-window", "-d", "-P", "-F", "#{pane_id}", "-t", "@2", "-c", "/tmp/m2"])
-expect(commands).toContainEqual(["send-keys", "-t", "%1", "tail -n +1 -f '/tmp/omo-team/run-2/lead.fifo'", "Enter"])
-expect(commands).toContainEqual(["send-keys", "-t", "%3", "tail -n +1 -f '/tmp/omo-team/run-2/m3.fifo'", "Enter"])
-    expect(ensureTeamMemberFifoMock).toHaveBeenCalledTimes(3)
-    expect(result?.fifoByMember).toEqual({
-      lead: "/tmp/omo-team/run-2/lead.fifo",
-      m2: "/tmp/omo-team/run-2/m2.fifo",
-      m3: "/tmp/omo-team/run-2/m3.fifo",
-    })
-  })
-
-  test("returns null when tmux command fails", async () => {
-    // given
-    runTmuxCommandMock.mockImplementationOnce(() => Promise.resolve({ success: false, output: "" }))
-
-    // when
-    const result = await createTeamLayout("run-3", [{ name: "lead", sessionId: "s1" }], {} as never)
+    const result = await createTeamLayout(
+      "run-health",
+      [{ name: "lead", sessionId: "s1", worktreePath: "/tmp/lead" }],
+      tmuxMgr as never,
+    )
 
     // then
     expect(result).toBeNull()
+    expect(runTmuxCommandMock).toHaveBeenCalledTimes(0)
   })
 
-  test("cleans up the tmux session", async () => {
+  test("spawns each pane with opencode attach as the initial command", async () => {
     // given
+    const members = [
+      { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
+      { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
+    ]
+
     // when
-    await removeTeamLayout("run-4", {} as never)
+    await createTeamLayout("run-attach", members, tmuxMgr as never)
 
     // then
-    const commands = (runTmuxCommandMock.mock.calls as unknown as Array<[string, Array<string>]>).map((call) => call[1]).flat()
-    expect(commands).toContain("kill-session")
+    const commands = getCommands()
+    const newWindowCalls = commands.filter((args) => args[0] === "new-window")
+    const splitWindowCalls = commands.filter((args) => args[0] === "split-window")
+    expect(newWindowCalls.length).toBeGreaterThan(0)
+    expect(splitWindowCalls.length).toBeGreaterThan(0)
+    const leadSnippet = "opencode attach 'http://127.0.0.1:12345' --session 's-lead' --dir '/tmp/lead'"
+    const m2Snippet = "opencode attach 'http://127.0.0.1:12345' --session 's-m2' --dir '/tmp/m2'"
+    for (const call of newWindowCalls) {
+      const last = call[call.length - 1] ?? ""
+      expect(last).toContain(leadSnippet)
+    }
+    const splitSnippets = splitWindowCalls.map((call) => call[call.length - 1] ?? "")
+    expect(splitSnippets.some((snippet) => snippet.includes(m2Snippet))).toBe(true)
+  })
+
+  test("creates focus (main-vertical) and grid (tiled) windows", async () => {
+    // given
+    const members = [
+      { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
+      { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
+      { name: "m3", sessionId: "s-m3", worktreePath: "/tmp/m3" },
+    ]
+
+    // when
+    const result = await createTeamLayout("run-layout", members, tmuxMgr as never)
+
+    // then
+    const commands = getCommands()
+    const selectLayoutArgs = commands.filter((args) => args[0] === "select-layout").map((args) => args[args.length - 1])
+    expect(selectLayoutArgs).toEqual(["main-vertical", "tiled"])
+    expect(result).not.toBeNull()
+    expect(Object.keys(result?.panesByMember ?? {}).sort()).toEqual(["lead", "m2", "m3"])
+  })
+
+  test("sets pane title for each member", async () => {
+    // given
+    const members = [
+      { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
+      { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
+    ]
+
+    // when
+    await createTeamLayout("run-title", members, tmuxMgr as never)
+
+    // then
+    const commands = getCommands()
+    const titleSetters = commands
+      .filter((args) => args[0] === "select-pane" && args.includes("-T"))
+      .map((args) => args[args.length - 1])
+    const counts: Record<string, number> = {}
+    for (const name of titleSetters) counts[name] = (counts[name] ?? 0) + 1
+    expect(counts["lead"]).toBe(2)
+    expect(counts["m2"]).toBe(2)
+  })
+
+  test("result does not include fifoByMember", async () => {
+    // given
+    const members = [{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" }]
+
+    // when
+    const result = await createTeamLayout("run-no-fifo", members, tmuxMgr as never)
+
+    // then
+    expect(result).not.toBeNull()
+    expect(Object.keys(result ?? {})).not.toContain("fifoByMember")
+  })
+
+  test("cleans up the tmux session on removeTeamLayout", async () => {
+    // given
+    runTmuxCommandMock.mockImplementationOnce(() => Promise.resolve({ success: false, output: "no such session" }))
+
+    // when
+    await removeTeamLayout("run-cleanup", tmuxMgr as never)
+
+    // then
+    const commands = getCommands()
+    expect(commands).toContainEqual(["kill-session", "-t", "omo-team-run-cleanup"])
+  })
+
+  test("skips all panes when lead member missing", async () => {
+    // given
+    const members: Array<{ name: string; sessionId: string }> = []
+
+    // when
+    const result = await createTeamLayout("run-empty", members, tmuxMgr as never)
+
+    // then
+    expect(result).toBeNull()
+    const commands = getCommands()
+    expect(commands.some((args) => args[0] === "new-window")).toBe(false)
   })
 })

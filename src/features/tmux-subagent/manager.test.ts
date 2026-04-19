@@ -307,6 +307,50 @@ describe('TmuxSessionManager', () => {
     })
   })
 
+  describe('getServerUrl', () => {
+    test('returns normalized serverUrl from ctx', async () => {
+      // given
+      mockIsInsideTmux.mockReturnValue(true)
+      const { TmuxSessionManager } = await import('./manager')
+      const ctx = {
+        ...createMockContext(),
+        serverUrl: new URL('http://127.0.0.1:12345/'),
+      }
+      const config = createTmuxConfig({ enabled: true })
+      const manager = new TmuxSessionManager(ctx, config, mockTmuxDeps)
+
+      // when
+      const serverUrl = manager.getServerUrl()
+
+      // then
+      expect(serverUrl).toBe('http://127.0.0.1:12345/')
+    })
+
+    test('returns fallback when port is 0', async () => {
+      // given
+      mockIsInsideTmux.mockReturnValue(true)
+      const originalPort = process.env.OPENCODE_PORT
+      delete process.env.OPENCODE_PORT
+      const { TmuxSessionManager } = await import('./manager')
+      const ctx = {
+        ...createMockContext(),
+        serverUrl: new URL('http://127.0.0.1:0/'),
+      }
+      const config = createTmuxConfig({ enabled: true })
+      const manager = new TmuxSessionManager(ctx, config, mockTmuxDeps)
+
+      // when
+      const serverUrl = manager.getServerUrl()
+
+      // then
+      try {
+        expect(serverUrl).toBe(`http://localhost:${process.env.OPENCODE_PORT ?? '4096'}`)
+      } finally {
+        if (originalPort !== undefined) process.env.OPENCODE_PORT = originalPort
+      }
+    })
+  })
+
   describe('onSessionCreated', () => {
     test('first agent spawns from source pane via decision engine', async () => {
       // given
