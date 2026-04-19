@@ -144,11 +144,11 @@ describe("createTeamSendMessageTool", () => {
     const parsedLeadResult = JSON.parse(leadResult)
 
     // then
-    expect(parsedLeadResult.deliveredTo).toEqual(["team-lead", "m1", "m2"])
+    expect(parsedLeadResult.deliveredTo).toEqual(["m1", "m2"])
     const memberOneInbox = await readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m1"))
     const memberTwoInbox = await readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2"))
-    expect(memberOneInbox.filter((entry) => entry.endsWith(".json"))).toHaveLength(1)
-    expect(memberTwoInbox.filter((entry) => entry.endsWith(".json"))).toHaveLength(1)
+    expect(memberOneInbox.filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))).toHaveLength(1)
+    expect(memberTwoInbox.filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))).toHaveLength(1)
   })
 
   test("live-delivers the envelope via promptAsync to the recipient session", async () => {
@@ -194,7 +194,7 @@ describe("createTeamSendMessageTool", () => {
     expect(processedEntries).toHaveLength(1)
   })
 
-  test("broadcast fans out live delivery to every active member with a session", async () => {
+  test("broadcast fans out live delivery to every member except the sender", async () => {
     // given
     const fixture = await createTeamFixture()
     const { client, calls } = createRecordingClient()
@@ -211,10 +211,39 @@ describe("createTeamSendMessageTool", () => {
     // then
     const targetedSessionIds = calls.map((entry) => entry.sessionId).sort()
     expect(targetedSessionIds).toEqual([
-      fixture.leadSessionId,
       fixture.memberOneSessionId,
       fixture.memberTwoSessionId,
     ].sort())
+  })
+
+  test("broadcast still queues for members whose session has not spawned yet", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { loadRuntimeState: loadState } = await import("../team-state-store/store")
+    const stateBefore = await loadState(fixture.teamRunId, fixture.config)
+    const pendingMember = stateBefore.members.find((member) => member.name === "m2")
+    if (!pendingMember) throw new Error("m2 runtime member missing")
+    pendingMember.sessionId = undefined
+    await saveRuntimeState(stateBefore, fixture.config)
+
+    const { client, calls } = createRecordingClient()
+    const liveTool = createTeamSendMessageTool(fixture.config, client)
+
+    // when
+    const result = await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "*",
+      body: "broadcast ping",
+      kind: "announcement",
+    }, fixture.toolContext(fixture.leadSessionId))
+    const parsedResult = JSON.parse(result)
+
+    // then
+    expect(parsedResult.deliveredTo).toEqual(["m1", "m2"])
+    const targetedSessionIds = calls.map((entry) => entry.sessionId)
+    expect(targetedSessionIds).toEqual([fixture.memberOneSessionId])
+    const memberTwoInbox = await readdir(getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2"))
+    expect(memberTwoInbox.filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))).toHaveLength(1)
   })
 
   test("inbox stays intact when live delivery fails so the fallback path still works", async () => {

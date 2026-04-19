@@ -38,14 +38,15 @@ async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, c
       ? runtimeState.members.find((member) => member.agentType === "leader")
       : undefined
     const member = runtimeState.members.find((entry) => entry.sessionId === sessionID)
+    const senderName = leadMember?.name ?? member?.name ?? "unknown"
 
     return {
       teamRunId: runtimeState.teamRunId,
       isLead,
-      senderName: leadMember?.name ?? member?.name ?? "unknown",
+      senderName,
       activeMembers: runtimeState.members
-        .filter((entry) => entry.sessionId !== undefined)
-        .map((entry) => entry.name),
+        .map((entry) => entry.name)
+        .filter((name) => name !== senderName),
     }
   }
 
