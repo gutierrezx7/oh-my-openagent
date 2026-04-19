@@ -25,12 +25,17 @@ const runTmuxCommandMock = mock((_tmuxPath: string, args: Array<string>) => {
 
 const isServerRunningMock = mock(async (_serverUrl: string) => true)
 
-mock.module("./tmux-runner", () => ({ runTmuxCommand: runTmuxCommandMock }))
-mock.module("../../../tools/interactive-bash/tmux-path-resolver", () => ({ getTmuxPath: mock(() => Promise.resolve("tmux")) }))
-mock.module("../../../shared", () => ({ log: mock(() => undefined) }))
-mock.module("../../../shared/tmux", () => ({ isServerRunning: isServerRunningMock }))
+function registerMocks(): void {
+  mock.module("./tmux-runner", () => ({ runTmuxCommand: runTmuxCommandMock }))
+  mock.module("../../../tools/interactive-bash/tmux-path-resolver", () => ({ getTmuxPath: mock(() => Promise.resolve("tmux")) }))
+  mock.module("../../../shared", () => ({ log: mock(() => undefined) }))
+  mock.module("../../../shared/tmux", () => ({ isServerRunning: isServerRunningMock }))
+}
 
-import { canVisualize, createTeamLayout, removeTeamLayout } from "./layout"
+async function loadLayoutModule() {
+  registerMocks()
+  return import(new URL(`./layout.ts?test=${Date.now()}-${Math.random()}`, import.meta.url).href)
+}
 
 type TmuxMgrLike = { getServerUrl: () => string }
 
@@ -42,6 +47,7 @@ function getCommands(): Array<Array<string>> {
 
 describe("team-layout-tmux", () => {
   beforeEach(() => {
+    registerMocks()
     runTmuxCommandMock.mockClear()
     isServerRunningMock.mockClear()
     isServerRunningMock.mockImplementation(async () => true)
@@ -53,6 +59,7 @@ describe("team-layout-tmux", () => {
   test("returns null and makes no tmux calls when visualization unavailable", async () => {
     // given
     delete process.env.TMUX
+    const { canVisualize, createTeamLayout } = await loadLayoutModule()
 
     // when
     const result = await createTeamLayout("run-1", [], tmuxMgr as never)
@@ -66,6 +73,7 @@ describe("team-layout-tmux", () => {
   test("returns null when server health check fails", async () => {
     // given
     isServerRunningMock.mockImplementation(async () => false)
+    const { createTeamLayout } = await loadLayoutModule()
 
     // when
     const result = await createTeamLayout(
@@ -81,6 +89,7 @@ describe("team-layout-tmux", () => {
 
   test("spawns each pane with opencode attach as the initial command", async () => {
     // given
+    const { createTeamLayout } = await loadLayoutModule()
     const members = [
       { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
       { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
@@ -107,6 +116,7 @@ describe("team-layout-tmux", () => {
 
   test("creates focus (main-vertical) and grid (tiled) windows", async () => {
     // given
+    const { createTeamLayout } = await loadLayoutModule()
     const members = [
       { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
       { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
@@ -126,6 +136,7 @@ describe("team-layout-tmux", () => {
 
   test("sets pane title for each member", async () => {
     // given
+    const { createTeamLayout } = await loadLayoutModule()
     const members = [
       { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
       { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
@@ -147,6 +158,7 @@ describe("team-layout-tmux", () => {
 
   test("cleans up the tmux session on removeTeamLayout", async () => {
     // given
+    const { removeTeamLayout } = await loadLayoutModule()
     runTmuxCommandMock.mockImplementationOnce(() => Promise.resolve({ success: false, output: "no such session" }))
 
     // when
@@ -159,6 +171,7 @@ describe("team-layout-tmux", () => {
 
   test("skips all panes when lead member missing", async () => {
     // given
+    const { createTeamLayout } = await loadLayoutModule()
     const members: Array<{ name: string; sessionId: string }> = []
 
     // when
