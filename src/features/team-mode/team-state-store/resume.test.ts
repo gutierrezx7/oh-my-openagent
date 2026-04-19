@@ -349,4 +349,40 @@ describe("resumeAllTeams", () => {
     expect(report.resumed).toBe(0)
     expect(report.marked_orphaned).toBe(1)
   })
+
+  test("orphans active teams on a second resume after one worker was already errored and the last live worker just died", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const runtimeState = await createRuntimeState(createSpecWithTwoWorkers(), "ses_alive_lead", "user", config)
+    await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
+      ...currentRuntimeState,
+      status: "active",
+      leadSessionId: "ses_alive_lead",
+      members: currentRuntimeState.members.map((member) => {
+        if (member.name === "lead") return { ...member, sessionId: "ses_alive_lead", status: "running" as const }
+        if (member.name === "worker-a") return { ...member, sessionId: undefined, status: "errored" as const }
+        return { ...member, sessionId: "ses_dead_b", status: "running" as const }
+      }),
+    }), config)
+    const sessionGet = mock(async ({ path }: { path: { id: string } }) => {
+      if (path.id === "ses_alive_lead") return { data: { id: path.id } }
+      throw Object.assign(new Error("session not found"), { status: 404 })
+    })
+
+    // when
+    const report = await resumeAllTeams(createExecutorContext(baseDir, sessionGet), config)
+    const persistedState = await loadRuntimeState(runtimeState.teamRunId, config)
+
+    // then
+    expect(persistedState.status).toBe("orphaned")
+    const workerA = persistedState.members.find((member) => member.name === "worker-a")
+    const workerB = persistedState.members.find((member) => member.name === "worker-b")
+    expect(workerA?.status).toBe("errored")
+    expect(workerB?.status).toBe("errored")
+    expect(workerB?.sessionId).toBeUndefined()
+    expect(report.resumed).toBe(0)
+    expect(report.marked_orphaned).toBe(1)
+  })
 })

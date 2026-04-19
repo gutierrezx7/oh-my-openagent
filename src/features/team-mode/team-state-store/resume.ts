@@ -102,6 +102,10 @@ async function inspectWorkerMembers(
   const workerMembers = runtimeState.members.filter((member) => member.agentType !== "leader")
 
   return await Promise.all(workerMembers.map(async (member) => {
+    if (member.status === "errored") {
+      return { name: member.name, wasSpawned: true, stillAlive: false }
+    }
+
     if (member.sessionId === undefined) {
       return { name: member.name, wasSpawned: false, stillAlive: true }
     }
