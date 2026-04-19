@@ -91,11 +91,11 @@ Add `"worktreePath": "../wt-scout"` to a member entry. Path is filesystem-relati
 
 ## tmux visualization (optional)
 
-Set `tmux_visualization: true`. Requires running inside a tmux session and tmux on PATH. Failures are isolated — a missing tmux never blocks team creation.
+Set `tmux_visualization: true`. Requires running inside a tmux session and tmux on PATH. Failures are isolated - a missing tmux never blocks team creation.
 
-When enabled, the `focus` window tails a per-member FIFO at `/tmp/omo-team/{teamRunId}/{memberName}.fifo`, so each pane shows that member session's streaming model output. Panes start in each member worktree when configured, otherwise the repo root.
+When enabled, each member gets a dedicated tmux pane attached to that member's session via `opencode attach`. The pane runs the full interactive opencode TUI for the member so you can watch streaming output in real time. Panes start in each member worktree when configured, otherwise the repo root.
 
-`team_delete` tears down the tmux session and removes the FIFO directory under `/tmp/omo-team/{teamRunId}/`.
+`team_delete` closes the panes and tears down the team layout. Per-member shutdown closes just that pane and rebalances the remaining layout.
 
 ## What team mode does NOT do
 
@@ -112,14 +112,17 @@ When enabled, the `focus` window tails a per-member FIFO at `/tmp/omo-team/{team
 
 ```
 ~/.omo/
-├── teams/{name}/config.json          # declared specs
-├── .highwatermark                     # parity marker for runtime state
+├── teams/{name}/config.json                      # declared specs
+├── .highwatermark                                # parity marker for runtime state
 └── runtime/{teamRunId}/
-    ├── state.json                    # durable runtime state
-    ├── inboxes/{member}/{uuid}.json  # mailbox (atomic per-message files)
-    ├── inboxes/{member}/processed/   # acked messages
-    └── tasks/{id}.json               # shared task list
+    ├── state.json                                # durable runtime state
+    ├── inboxes/{member}/{uuid}.json              # mailbox (atomic per-message files)
+    ├── inboxes/{member}/.delivering-{uuid}.json  # transient live-delivery reservation
+    ├── inboxes/{member}/processed/               # acked messages
+    └── tasks/{id}.json                           # shared task list
 ```
+
+`.delivering-{uuid}.json` files exist only while a message is being live-delivered via `promptAsync`. They are committed to `processed/` on delivery success, released back to `{uuid}.json` on failure, or reclaimed on team resume if stranded by a crash (10 minute TTL). `listUnreadMessages` ignores dotfile entries so the fallback poll never double-injects a reserved message.
 
 ## Reference
 
