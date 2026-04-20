@@ -112,6 +112,28 @@ describe("createTeamRun", () => {
     expect(runtimeState.members.map((member) => member.sessionId)).toEqual(["session-1", "session-2", "session-3"])
   })
 
+  test("persists the resolved subagent_type and model on each spawned runtime member", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-subagent-type-"))
+    temporaryDirectories.push(baseDir)
+    let launchCount = 0
+    const { manager } = createManager(baseDir, async () => ({ id: `task-${++launchCount}`, sessionID: `session-${launchCount}`, status: "running" } as BackgroundTask))
+
+    // when
+    const runtimeState = await createTeamRun(createSpec(3), "lead-session", createContext(baseDir, manager), createConfig(baseDir), manager)
+
+    // then
+    expect(runtimeState.members.map((member) => ({
+      name: member.name,
+      subagent_type: member.subagent_type,
+      model: member.model,
+    }))).toEqual([
+      { name: "member-1", subagent_type: "member-1-agent", model: { providerID: "openai", modelID: "gpt-5.4-mini" } },
+      { name: "member-2", subagent_type: "member-2-agent", model: { providerID: "openai", modelID: "gpt-5.4-mini" } },
+      { name: "member-3", subagent_type: "member-3-agent", model: { providerID: "openai", modelID: "gpt-5.4-mini" } },
+    ])
+  })
+
   test("rolls back launched members in reverse order when a later spawn fails", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-rollback-"))

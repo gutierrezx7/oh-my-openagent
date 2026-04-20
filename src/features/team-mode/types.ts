@@ -117,11 +117,19 @@ export const TaskSchema = z.object({
   claimedAt: z.number().int().positive().optional(),
 })
 
+const RuntimeStateMemberModelSchema = z.object({
+  providerID: z.string(),
+  modelID: z.string(),
+  variant: z.string().optional(),
+}).strict()
+
 const RuntimeStateMemberSchema = z.object({
   name: z.string(),
   sessionId: z.string().optional(),
   tmuxPaneId: z.string().optional(),
   agentType: z.enum(["leader", "general-purpose"]),
+  subagent_type: z.string().optional(),
+  model: RuntimeStateMemberModelSchema.optional(),
   status: z.enum(["pending", "running", "idle", "errored", "completed", "shutdown_approved"]),
   color: z.string().optional(),
   worktreePath: z.string().optional(),

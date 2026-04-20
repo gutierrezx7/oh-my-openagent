@@ -174,10 +174,24 @@ export async function createTeamRun(
           })
           resource.taskId = task.id
           const sessionId = await waitForTaskSessionId(bgMgr, task, deadlineAt)
+          const persistedModel = resolvedMember.model
+            ? {
+                providerID: resolvedMember.model.providerID,
+                modelID: resolvedMember.model.modelID,
+                ...(resolvedMember.model.variant ? { variant: resolvedMember.model.variant } : {}),
+              }
+            : undefined
           await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({
             ...currentState,
             members: currentState.members.map((currentMember, currentIndex) => currentIndex === memberIndex
-              ? { ...currentMember, sessionId, status: "running", worktreePath: resource.worktreePath }
+              ? {
+                  ...currentMember,
+                  sessionId,
+                  status: "running",
+                  worktreePath: resource.worktreePath,
+                  subagent_type: resolvedMember.agentToUse,
+                  ...(persistedModel ? { model: persistedModel } : {}),
+                }
               : currentMember),
           }), config)
         } catch (error) {
