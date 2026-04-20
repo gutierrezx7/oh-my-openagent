@@ -225,7 +225,7 @@ describe("TmuxSessionManager zombie pane handling", () => {
     expect(mockExecuteAction).toHaveBeenCalledTimes(1)
   })
 
-  test("#given session with closePending true and closeRetryCount >= 3 #when retryPendingCloses called #then session is force-removed from Map", async () => {
+  test("#given session with closePending true and closeRetryCount >= 3 and missing pane #when retryPendingCloses called #then session is removed from Map", async () => {
     // given
     const { TmuxSessionManager } = await import("./manager")
     const manager = createManager(TmuxSessionManager)
@@ -240,11 +240,11 @@ describe("TmuxSessionManager zombie pane handling", () => {
 
     // then
     expect(sessions.has("ses_pending")).toBe(false)
-    expect(mockQueryWindowState).not.toHaveBeenCalled()
+    expect(mockQueryWindowState).toHaveBeenCalledTimes(1)
     expect(mockExecuteAction).not.toHaveBeenCalled()
   })
 
-  test("#given session with closePending true and closeRetryCount >= 3 #when closeSessionById called #then session is force-removed without retrying close", async () => {
+  test("#given session with closePending true and closeRetryCount >= 3 and missing pane #when closeSessionById called #then session is removed without retrying close", async () => {
     // given
     const { TmuxSessionManager } = await import("./manager")
     const manager = createManager(TmuxSessionManager)
@@ -259,7 +259,34 @@ describe("TmuxSessionManager zombie pane handling", () => {
 
     // then
     expect(sessions.has("ses_pending")).toBe(false)
-    expect(mockQueryWindowState).not.toHaveBeenCalled()
+    expect(mockQueryWindowState).toHaveBeenCalledTimes(1)
+    expect(mockExecuteAction).not.toHaveBeenCalled()
+  })
+
+  test("#given session with closePending true and closeRetryCount >= 3 and pane still exists #when retryPendingCloses called #then session stays tracked for manual intervention", async () => {
+    // given
+    mockQueryWindowState.mockImplementation(async () => ({
+      windowWidth: 220,
+      windowHeight: 44,
+      mainPane: { paneId: "%0", width: 110, height: 44, left: 0, top: 0, title: "main", isActive: true },
+      agentPanes: [
+        { paneId: "%1", width: 40, height: 44, left: 110, top: 0, title: "Pending pane", isActive: false },
+      ],
+    }))
+    const { TmuxSessionManager } = await import("./manager")
+    const manager = createManager(TmuxSessionManager)
+    const sessions = getTrackedSessions(manager)
+    sessions.set(
+      "ses_pending",
+      createTrackedSession({ closePending: true, closeRetryCount: 3 }),
+    )
+
+    // when
+    await getRetryPendingCloses(manager)()
+
+    // then
+    expect(sessions.has("ses_pending")).toBe(true)
+    expect(mockQueryWindowState).toHaveBeenCalledTimes(1)
     expect(mockExecuteAction).not.toHaveBeenCalled()
   })
 

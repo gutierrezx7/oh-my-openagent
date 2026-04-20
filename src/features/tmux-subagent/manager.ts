@@ -324,6 +324,47 @@ export class TmuxSessionManager {
     }
   }
 
+  private windowStateContainsPane(state: WindowState, paneId: string): boolean {
+    return state.mainPane?.paneId === paneId
+      || state.agentPanes.some((pane) => pane.paneId === paneId)
+  }
+
+  private async finalizeForceRemoveCandidate(
+    tracked: TrackedSession,
+    source: string,
+  ): Promise<boolean> {
+    const state = await this.queryWindowStateSafely()
+    if (!state) {
+      log("[tmux-session-manager] unable to verify pane after max close retries; keeping session tracked", {
+        sessionId: tracked.sessionId,
+        paneId: tracked.paneId,
+        source,
+      })
+      return false
+    }
+
+    if (this.windowStateContainsPane(state, tracked.paneId)) {
+      log("[tmux-session-manager] pane still exists after max close retries; manual intervention required", {
+        sessionId: tracked.sessionId,
+        paneId: tracked.paneId,
+        source,
+      })
+      return false
+    }
+
+    log("[tmux-session-manager] pane already gone after max close retries; finalizing tracked close", {
+      sessionId: tracked.sessionId,
+      paneId: tracked.paneId,
+      source,
+    })
+    await this.finalizeTrackedSessionClose({
+      tracked,
+      state,
+      isolatedPaneAlreadyClosed: true,
+    })
+    return true
+  }
+
   private async closeTrackedSessionPane(args: {
     tracked: TrackedSession
     state: WindowState
@@ -393,12 +434,7 @@ export class TmuxSessionManager {
       if (!this.sessions.has(tracked.sessionId)) continue
 
       if (tracked.closeRetryCount >= MAX_CLOSE_RETRY_COUNT) {
-        log("[tmux-session-manager] force removing close-pending session after max retries", {
-          sessionId: tracked.sessionId,
-          paneId: tracked.paneId,
-          closeRetryCount: tracked.closeRetryCount,
-        })
-        this.removeTrackedSession(tracked.sessionId)
+        await this.finalizeForceRemoveCandidate(tracked, "retryPendingCloses.max-retries")
         continue
       }
 
@@ -419,12 +455,7 @@ export class TmuxSessionManager {
 
       const nextRetryCount = currentTracked.closeRetryCount + 1
       if (nextRetryCount >= MAX_CLOSE_RETRY_COUNT) {
-        log("[tmux-session-manager] force removing close-pending session after failed retry", {
-          sessionId: currentTracked.sessionId,
-          paneId: currentTracked.paneId,
-          closeRetryCount: nextRetryCount,
-        })
-        this.removeTrackedSession(currentTracked.sessionId)
+        await this.finalizeForceRemoveCandidate(currentTracked, "retryPendingCloses.failed-retry")
         continue
       }
 
@@ -1179,12 +1210,7 @@ export class TmuxSessionManager {
     if (!tracked) return
 
     if (tracked.closePending && tracked.closeRetryCount >= MAX_CLOSE_RETRY_COUNT) {
-      log("[tmux-session-manager] force removing close-pending session after max retries", {
-        sessionId,
-        paneId: tracked.paneId,
-        closeRetryCount: tracked.closeRetryCount,
-      })
-      this.removeTrackedSession(sessionId)
+      await this.finalizeForceRemoveCandidate(tracked, "closeSessionById.max-retries")
       return
     }
 
