@@ -636,7 +636,7 @@ describe("createEventHandler - event forwarding", () => {
 		})
 	})
 
-	it("still skips when parentID present and subagentSessions is empty", async () => {
+	it("Path A skips dispatch even when subagentSessions Set is populated only AFTER the event arrives (parentID covers it)", async () => {
 		//#given
 		type SessionCreatedEvent = {
 			type?: string
@@ -686,6 +686,18 @@ describe("createEventHandler - event forwarding", () => {
 		}))
 
 		//#then
+
+		//#when
+		subagentSessions.add("ses_parent_marked")
+		await eventHandler(asEventHandlerInput({
+			event: {
+				type: "session.created",
+				properties: { info: { id: "ses_parent_marked", title: "Child" } },
+			},
+		}))
+
+		//#then
+		expect(onSessionCreated).not.toHaveBeenCalled()
 		expect(onSessionCreated).not.toHaveBeenCalled()
 	})
 
