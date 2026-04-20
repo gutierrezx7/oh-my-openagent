@@ -167,6 +167,86 @@ describe("team-mode integration", () => {
     expect(await exists(getRuntimeStateDir(resolveBaseDir(config), deletingRuntime.teamRunId))).toBe(false)
   })
 
+  test("C-10.5 end-to-end: createTeamRun persists subagent_type/model and team_send_message pins them on promptAsync", async () => {
+    // given - a 2-member team; resolveMemberMock returns agentToUse + model per member
+    const baseDir = await createBaseDir()
+    const config = createConfig(baseDir)
+    const manager = createManager()
+
+    type RecordedPrompt = {
+      sessionId: string
+      agent?: string
+      model?: { providerID: string; modelID: string }
+      variant?: string
+    }
+    const recorded: RecordedPrompt[] = []
+    const promptAsyncSpy = mock(async (input: {
+      path: { id: string }
+      body: {
+        parts: Array<{ type: string; text?: string }>
+        agent?: string
+        model?: { providerID: string; modelID: string }
+        variant?: string
+      }
+    }) => {
+      recorded.push({
+        sessionId: input.path.id,
+        agent: input.body.agent,
+        model: input.body.model,
+        variant: input.body.variant,
+      })
+      return undefined
+    })
+    const recordingClient = {
+      session: {
+        get: mock(async ({ path: { id } }: { path: { id: string } }) => ({ data: { id } })),
+        promptAsync: promptAsyncSpy,
+      },
+    } as unknown as ExecutorContext["client"]
+    const ctx = { client: recordingClient, manager, directory: baseDir }
+
+    const runtime = await createTeamRun(createSpec("msg-team", "lead", [
+      { kind: "subagent_type", name: "lead", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
+      { kind: "subagent_type", name: "worker", subagent_type: "atlas", backendType: "in-process", isActive: true },
+    ]), "ses_lead", ctx, config, manager)
+
+    const leadMember = runtime.members.find((member) => member.name === "lead")
+    const workerMember = runtime.members.find((member) => member.name === "worker")
+    if (!leadMember?.sessionId || !workerMember?.sessionId) {
+      throw new Error("expected both team members to hold sessionIds")
+    }
+
+    const { createTeamSendMessageTool } = await import("./tools/messaging")
+    const tool = createTeamSendMessageTool(config, recordingClient as unknown as Parameters<typeof createTeamSendMessageTool>[1])
+
+    // when - the lead (via its spawned session) sends a live message to the worker
+    await tool.execute({
+      teamRunId: runtime.teamRunId,
+      to: "worker",
+      body: "integration-ping",
+    }, {
+      sessionID: leadMember.sessionId,
+      messageID: randomUUID(),
+      agent: "test-agent",
+      directory: baseDir,
+      worktree: baseDir,
+      abort: new AbortController().signal,
+      metadata: () => {},
+      ask: async () => undefined,
+    } as unknown as Parameters<ReturnType<typeof createTeamSendMessageTool>["execute"]>[1])
+
+    // then - runtime state carries the resolved identity end-to-end, and promptAsync receives it
+    const persistedRuntime = await loadRuntimeState(runtime.teamRunId, config)
+    const persistedWorker = persistedRuntime.members.find((member) => member.name === "worker")
+    expect(persistedWorker?.subagent_type).toBe("worker-agent")
+    expect(persistedWorker?.model).toEqual({ providerID: "openai", modelID: "gpt-5.4-mini" })
+
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]?.sessionId).toBe(workerMember.sessionId)
+    expect(recorded[0]?.agent).toBe("worker-agent")
+    expect(recorded[0]?.model).toEqual({ providerID: "openai", modelID: "gpt-5.4-mini" })
+  })
+
   test("C-10.4 keeps member spawn concurrency within max_parallel_members", async () => {
     // given
     const baseDir = await createBaseDir()
