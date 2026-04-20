@@ -77,6 +77,7 @@ export class TmuxSessionManager {
   private sessions = new Map<string, TrackedSession>()
   private pendingSessions = new Set<string>()
   private failedReadinessSessions = new Map<string, FailedReadinessSession>()
+  private closedByPolling = new Set<string>()
   private failedReadinessSweepInterval?: ReturnType<typeof setInterval>
   private spawnQueue: Promise<void> = Promise.resolve()
   private deferredSessions = new Map<string, DeferredSession>()
@@ -118,7 +119,7 @@ export class TmuxSessionManager {
     this.pollingManager = new TmuxPollingManager(
       this.client,
       this.sessions,
-      this.closeSessionById.bind(this),
+      this.closeSessionFromPolling.bind(this),
       this.retryPendingCloses.bind(this)
     )
     log("[tmux-session-manager] initialized", {
@@ -445,6 +446,11 @@ export class TmuxSessionManager {
     title: string,
     retryIsolatedContainer = false,
   ): void {
+    if (this.shouldSkipRespawnAfterPollingClose(sessionId, "deferred enqueue")) {
+      this.clearFailedReadinessSession(sessionId)
+      return
+    }
+
     const existingDeferredSession = this.deferredSessions.get(sessionId)
     if (existingDeferredSession) {
       if (retryIsolatedContainer && !existingDeferredSession.retryIsolatedContainer) {
@@ -847,6 +853,10 @@ export class TmuxSessionManager {
   }
 
   private async retryFailedReadinessSession(sessionId: string): Promise<void> {
+    if (this.shouldSkipRespawnAfterPollingClose(sessionId, "session.idle retry")) {
+      return
+    }
+
     const failedReadinessSession = this.getFailedReadinessSession(sessionId)
     if (!failedReadinessSession) {
       return
@@ -893,6 +903,11 @@ export class TmuxSessionManager {
     const deferred = this.deferredSessions.get(sessionId)
     if (!deferred) {
       this.deferredQueue.shift()
+      return
+    }
+
+    if (this.shouldSkipRespawnAfterPollingClose(sessionId, "deferred attach")) {
+      this.removeDeferredSession(sessionId)
       return
     }
 
@@ -1098,10 +1113,12 @@ export class TmuxSessionManager {
 
   async onSessionDeleted(event: { sessionID: string }): Promise<void> {
     if (!this.isEnabled()) return
-    if (!this.getEffectiveSourcePaneId()) return
 
+    this.closedByPolling.delete(event.sessionID)
     this.clearFailedReadinessSession(event.sessionID)
     this.removeDeferredSession(event.sessionID)
+
+    if (!this.getEffectiveSourcePaneId()) return
 
     const tracked = this.sessions.get(event.sessionID)
     if (!tracked) return
@@ -1183,6 +1200,23 @@ export class TmuxSessionManager {
     }
   }
 
+  private async closeSessionFromPolling(sessionId: string): Promise<void> {
+    this.closedByPolling.add(sessionId)
+    await this.closeSessionById(sessionId)
+  }
+
+  private shouldSkipRespawnAfterPollingClose(sessionId: string, source: string): boolean {
+    if (!this.closedByPolling.has(sessionId)) {
+      return false
+    }
+
+    log("[tmux-session-manager] skipping tmux respawn because polling already closed the session", {
+      sessionId,
+      source,
+    })
+    return true
+  }
+
   onEvent(event: { type: string; properties?: Record<string, unknown> }): void {
     this.pollingManager.handleEvent(event)
 
@@ -1210,6 +1244,7 @@ export class TmuxSessionManager {
     this.deferredQueue = []
     this.deferredSessions.clear()
     this.failedReadinessSessions.clear()
+    this.closedByPolling.clear()
     this.stopFailedReadinessSweep()
     this.pollingManager.stopPolling()
 

@@ -936,6 +936,46 @@ describe('TmuxSessionManager', () => {
       expect((manager as any).deferredQueue).toEqual(['ses_pending_race'])
     })
 
+    test('drops deferred sessions that were already closed by polling', async () => {
+      // given
+      mockIsInsideTmux.mockReturnValue(true)
+      mockQueryWindowState.mockImplementation(async () =>
+        createWindowState({
+          windowWidth: 160,
+          windowHeight: 11,
+          agentPanes: [
+            {
+              paneId: '%1',
+              width: 80,
+              height: 11,
+              left: 80,
+              top: 0,
+              title: 'old',
+              isActive: false,
+            },
+          ],
+        })
+      )
+
+      const { TmuxSessionManager } = await import('./manager')
+      const manager = new TmuxSessionManager(createMockContext(), createTmuxConfig({ enabled: true }), mockTmuxDeps)
+
+      await manager.onSessionCreated(
+        createSessionCreatedEvent('ses_bounce', 'ses_parent', 'Bounce Task')
+      )
+      expect((manager as any).deferredQueue).toEqual(['ses_bounce'])
+
+      mockQueryWindowState.mockImplementation(async () => createWindowState())
+      Reflect.set(manager, 'closedByPolling', new Set(['ses_bounce']))
+
+      // when
+      await Reflect.get(manager, 'tryAttachDeferredSession').call(manager)
+
+      // then
+      expect(mockSpawnTmuxPane).toHaveBeenCalledTimes(0)
+      expect((manager as any).deferredQueue).toEqual([])
+    })
+
     test('removes deferred session when session is deleted before attach', async () => {
       // given
       mockIsInsideTmux.mockReturnValue(true)
@@ -1427,6 +1467,33 @@ describe('TmuxSessionManager', () => {
       expect(getFailedReadinessSessions(manager).has('ses_expired')).toBe(false)
 
       nowSpy.mockRestore()
+    })
+
+    test('does not retry failed readiness sessions after polling marked the session closed', async () => {
+      // given
+      mockIsInsideTmux.mockReturnValue(true)
+
+      const { TmuxSessionManager } = await import('./manager')
+      const manager = new TmuxSessionManager(
+        createMockContext({ sessionStatusResult: { data: { ses_bounce: { type: 'idle' } } } }),
+        createTmuxConfig({ enabled: true }),
+        mockTmuxDeps,
+      )
+
+      Reflect.get(manager, 'failedReadinessSessions').set('ses_bounce', {
+        sessionId: 'ses_bounce',
+        title: 'Bounce Session',
+        rememberedAt: Date.now(),
+      })
+      Reflect.set(manager, 'closedByPolling', new Set(['ses_bounce']))
+
+      // when
+      manager.onEvent({ type: 'session.idle', properties: { sessionID: 'ses_bounce' } })
+      await flushMicrotasks(20)
+
+      // then
+      expect(mockSpawnTmuxPane).toHaveBeenCalledTimes(0)
+      expect(getFailedReadinessSessions(manager).has('ses_bounce')).toBe(true)
     })
 
     test('#given duplicate session.created triggers while readiness is pending #when readiness resolves #then only one pane spawn runs', async () => {
