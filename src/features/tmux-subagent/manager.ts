@@ -12,7 +12,7 @@ import {
   getIsolatedSessionName,
   sweepStaleOmoAgentSessions,
 } from "../../shared/tmux"
-import { queryWindowState } from "./pane-state-querier"
+import { queryWindowState as defaultQueryWindowState } from "./pane-state-querier"
 import { decideSpawnActions, decideCloseAction, type SessionMapping } from "./decision-engine"
 import { executeActions, executeAction } from "./action-executor"
 import { TmuxPollingManager } from "./polling-manager"
@@ -48,11 +48,13 @@ interface FailedReadinessSession {
 export interface TmuxUtilDeps {
   isInsideTmux: () => boolean
   getCurrentPaneId: () => string | undefined
+  queryWindowState: (paneId: string) => Promise<WindowState | null>
 }
 
 const defaultTmuxDeps: TmuxUtilDeps = {
   isInsideTmux: defaultIsInsideTmux,
   getCurrentPaneId: defaultGetCurrentPaneId,
+  queryWindowState: defaultQueryWindowState,
 }
 
 const DEFERRED_SESSION_TTL_MS = 5 * 60 * 1000
@@ -63,6 +65,7 @@ const MAX_ISOLATED_CONTAINER_NULL_STATE_COUNT = 2
 export class TmuxSessionManager {
   private client: OpencodeClient
   private tmuxConfig: TmuxConfig
+  private projectDirectory: string
   private serverUrl: string
   private sourcePaneId: string | undefined
   private sessions = new Map<string, TrackedSession>()
@@ -84,6 +87,7 @@ export class TmuxSessionManager {
   constructor(ctx: PluginInput, tmuxConfig: TmuxConfig, deps: TmuxUtilDeps = defaultTmuxDeps) {
     this.client = ctx.client
     this.tmuxConfig = tmuxConfig
+    this.projectDirectory = ctx.directory
     this.deps = deps
     const defaultPort = process.env.OPENCODE_PORT ?? "4096"
     const fallbackUrl = `http://localhost:${defaultPort}`
@@ -113,6 +117,7 @@ export class TmuxSessionManager {
     log("[tmux-session-manager] initialized", {
       configEnabled: this.tmuxConfig.enabled,
       tmuxConfig: this.tmuxConfig,
+      projectDirectory: this.projectDirectory,
       serverUrl: this.serverUrl,
       sourcePaneId: this.sourcePaneId,
     })
@@ -138,7 +143,7 @@ export class TmuxSessionManager {
   ): Promise<string | null> {
     if (!this.isIsolated()) return null
     if (this.isolatedWindowPaneId) {
-      const state = await queryWindowState(this.isolatedWindowPaneId).catch((error) => {
+        const state = await this.deps.queryWindowState(this.isolatedWindowPaneId).catch((error) => {
         log("[tmux-session-manager] failed to query isolated window state", {
           paneId: this.isolatedWindowPaneId,
           error: String(error),
@@ -167,8 +172,8 @@ export class TmuxSessionManager {
     log("[tmux-session-manager] creating isolated tmux container", { isolation, sessionId, title })
 
     const result = isolation === "session"
-      ? await spawnTmuxSession(sessionId, title, this.tmuxConfig, this.serverUrl, this.sourcePaneId)
-      : await spawnTmuxWindow(sessionId, title, this.tmuxConfig, this.serverUrl)
+      ? await spawnTmuxSession(sessionId, title, this.tmuxConfig, this.serverUrl, this.projectDirectory, this.sourcePaneId)
+      : await spawnTmuxWindow(sessionId, title, this.tmuxConfig, this.serverUrl, this.projectDirectory)
 
     if (result.success && result.paneId) {
       this.isolatedContainerPaneId = result.paneId
@@ -263,6 +268,7 @@ export class TmuxSessionManager {
         { type: "close", paneId: isolatedContainerPaneId, sessionId: tracked.sessionId },
         {
           config: this.tmuxConfig,
+          directory: this.projectDirectory,
           serverUrl: this.serverUrl,
           windowState: state,
           sourcePaneId: this.sourcePaneId ?? tracked.paneId,
@@ -301,7 +307,7 @@ export class TmuxSessionManager {
     if (!paneId) return null
 
     try {
-      return await queryWindowState(paneId)
+      return await this.deps.queryWindowState(paneId)
     } catch (error) {
       log("[tmux-session-manager] failed to query window state for close", {
         error: String(error),
@@ -321,6 +327,7 @@ export class TmuxSessionManager {
         { type: "close", paneId: tracked.paneId, sessionId: tracked.sessionId },
         {
           config: this.tmuxConfig,
+          directory: this.projectDirectory,
           serverUrl: this.serverUrl,
           windowState: state,
           sourcePaneId: this.getEffectiveSourcePaneId(),
@@ -628,7 +635,7 @@ export class TmuxSessionManager {
       return
     }
 
-    const state = await queryWindowState(sourcePaneId)
+    const state = await this.deps.queryWindowState(sourcePaneId)
     if (!state) {
       log("[tmux-session-manager] failed to query window state, deferring session")
       this.enqueueDeferredSession(sessionId, title)
@@ -677,6 +684,7 @@ export class TmuxSessionManager {
       decision.actions,
       {
         config: this.tmuxConfig,
+        directory: this.projectDirectory,
         serverUrl: this.serverUrl,
         windowState: state,
         sourcePaneId,
@@ -734,7 +742,12 @@ export class TmuxSessionManager {
     if (result.spawnedPaneId) {
       await executeAction(
         { type: "close", paneId: result.spawnedPaneId, sessionId },
-        { config: this.tmuxConfig, serverUrl: this.serverUrl, windowState: state },
+        {
+          config: this.tmuxConfig,
+          directory: this.projectDirectory,
+          serverUrl: this.serverUrl,
+          windowState: state,
+        },
       )
     }
   }
@@ -845,7 +858,7 @@ export class TmuxSessionManager {
     const effectiveSourcePaneId = this.getEffectiveSourcePaneId()
     if (!effectiveSourcePaneId) return
 
-    const state = await queryWindowState(effectiveSourcePaneId)
+    const state = await this.deps.queryWindowState(effectiveSourcePaneId)
     if (!state) {
       this.nullStateCount += 1
       log("[tmux-session-manager] deferred attach window state is null", {
@@ -888,6 +901,7 @@ export class TmuxSessionManager {
 
     const result = await executeActions(decision.actions, {
       config: this.tmuxConfig,
+      directory: this.projectDirectory,
       serverUrl: this.serverUrl,
       windowState: state,
       sourcePaneId: effectiveSourcePaneId,
@@ -1022,6 +1036,7 @@ export class TmuxSessionManager {
     try {
       const result = await executeAction(closeAction, {
         config: this.tmuxConfig,
+        directory: this.projectDirectory,
         serverUrl: this.serverUrl,
         windowState: state,
         sourcePaneId: this.getEffectiveSourcePaneId(),

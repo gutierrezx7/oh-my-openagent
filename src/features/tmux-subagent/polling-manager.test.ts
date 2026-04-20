@@ -106,4 +106,82 @@ describe("TmuxPollingManager overlap", () => {
     expect(messagesCallCount).toBe(0)
     expect(closedSessionIds).toEqual(["ses-1"])
   })
+
+  test("does not close sessions missing from one poll until the longer grace window elapses", async () => {
+    // given
+    const now = Date.now()
+    const sessions = new Map<string, TrackedSession>()
+    sessions.set("ses-1", {
+      sessionId: "ses-1",
+      paneId: "%1",
+      description: "test",
+      createdAt: new Date(now - 1_000),
+      lastSeenAt: new Date(now - 7_000),
+      closePending: false,
+      closeRetryCount: 0,
+      activityVersion: 0,
+    })
+
+    const closedSessionIds: string[] = []
+    const client = {
+      session: {
+        status: async () => ({ data: {} }),
+        messages: async () => ({ data: [] }),
+      },
+    }
+
+    const manager = new TmuxPollingManager(
+      client as unknown as import("../../tools/delegate-task/types").OpencodeClient,
+      sessions,
+      async (sessionId) => {
+        closedSessionIds.push(sessionId)
+      },
+    )
+
+    // when
+    const pollSessions = (manager as unknown as { pollSessions: () => Promise<void> }).pollSessions
+    await pollSessions.call(manager)
+
+    // then
+    expect(closedSessionIds).toEqual([])
+  })
+
+  test("does not time out active sessions after only eleven minutes", async () => {
+    // given
+    const now = Date.now()
+    const sessions = new Map<string, TrackedSession>()
+    sessions.set("ses-1", {
+      sessionId: "ses-1",
+      paneId: "%1",
+      description: "test",
+      createdAt: new Date(now - 11 * 60 * 1000),
+      lastSeenAt: new Date(now),
+      closePending: false,
+      closeRetryCount: 0,
+      activityVersion: 0,
+    })
+
+    const closedSessionIds: string[] = []
+    const client = {
+      session: {
+        status: async () => ({ data: { "ses-1": { type: "running" } } }),
+        messages: async () => ({ data: [] }),
+      },
+    }
+
+    const manager = new TmuxPollingManager(
+      client as unknown as import("../../tools/delegate-task/types").OpencodeClient,
+      sessions,
+      async (sessionId) => {
+        closedSessionIds.push(sessionId)
+      },
+    )
+
+    // when
+    const pollSessions = (manager as unknown as { pollSessions: () => Promise<void> }).pollSessions
+    await pollSessions.call(manager)
+
+    // then
+    expect(closedSessionIds).toEqual([])
+  })
 })

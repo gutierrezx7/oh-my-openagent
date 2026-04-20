@@ -77,51 +77,41 @@ const mockGetCurrentPaneId = mock<() => string | undefined>(() => '%0')
 const mockTmuxDeps: TmuxUtilDeps = {
   isInsideTmux: mockIsInsideTmux,
   getCurrentPaneId: mockGetCurrentPaneId,
+  queryWindowState: mockQueryWindowState,
 }
 
-mock.module('./pane-state-querier', () => ({
-  queryWindowState: mockQueryWindowState,
-  paneExists: mockPaneExists,
-  getRightmostAgentPane: (state: WindowState) =>
-    state.agentPanes.length > 0
-      ? state.agentPanes.reduce((r, p) => (p.left > r.left ? p : r))
-      : null,
-  getOldestAgentPane: (state: WindowState) =>
-    state.agentPanes.length > 0
-      ? state.agentPanes.reduce((o, p) => (p.left < o.left ? p : o))
-      : null,
-}))
+function registerModuleMocks(): void {
+  mock.module('./action-executor', () => ({
+    executeActions: mockExecuteActions,
+    executeAction: mockExecuteAction,
+    executeActionWithDeps: mockExecuteAction,
+  }))
+
+  mock.module('./session-ready-waiter', () => ({
+    waitForSessionReady: mockWaitForSessionReady,
+  }))
+
+  mock.module('../../shared/tmux', () => {
+    const { isInsideTmux, getCurrentPaneId } = require('../../shared/tmux/tmux-utils')
+    const { POLL_INTERVAL_BACKGROUND_MS, SESSION_TIMEOUT_MS, SESSION_MISSING_GRACE_MS } = require('../../shared/tmux/constants')
+    return {
+      isInsideTmux,
+      getCurrentPaneId,
+      POLL_INTERVAL_BACKGROUND_MS,
+      SESSION_TIMEOUT_MS,
+      SESSION_MISSING_GRACE_MS,
+      SESSION_READY_POLL_INTERVAL_MS: 100,
+      SESSION_READY_TIMEOUT_MS: 500,
+      spawnTmuxWindow: mockSpawnTmuxWindow,
+      spawnTmuxSession: mockSpawnTmuxSession,
+      killTmuxSessionIfExists: mockKillTmuxSessionIfExists,
+      getIsolatedSessionName: (pid: number = 12345) => `omo-agents-${pid}`,
+      sweepStaleOmoAgentSessions: mockSweepStaleOmoAgentSessions,
+    }
+  })
+}
 
 afterAll(() => { mock.restore() })
-
-mock.module('./action-executor', () => ({
-  executeActions: mockExecuteActions,
-  executeAction: mockExecuteAction,
-  executeActionWithDeps: mockExecuteAction,
-}))
-
-mock.module('./session-ready-waiter', () => ({
-  waitForSessionReady: mockWaitForSessionReady,
-}))
-
-mock.module('../../shared/tmux', () => {
-  const { isInsideTmux, getCurrentPaneId } = require('../../shared/tmux/tmux-utils')
-  const { POLL_INTERVAL_BACKGROUND_MS, SESSION_TIMEOUT_MS, SESSION_MISSING_GRACE_MS } = require('../../shared/tmux/constants')
-  return {
-    isInsideTmux,
-    getCurrentPaneId,
-    POLL_INTERVAL_BACKGROUND_MS,
-    SESSION_TIMEOUT_MS,
-    SESSION_MISSING_GRACE_MS,
-    SESSION_READY_POLL_INTERVAL_MS: 100,
-    SESSION_READY_TIMEOUT_MS: 500,
-    spawnTmuxWindow: mockSpawnTmuxWindow,
-    spawnTmuxSession: mockSpawnTmuxSession,
-    killTmuxSessionIfExists: mockKillTmuxSessionIfExists,
-    getIsolatedSessionName: (pid: number = 12345) => `omo-agents-${pid}`,
-    sweepStaleOmoAgentSessions: mockSweepStaleOmoAgentSessions,
-  }
-})
 
 const trackedSessions = new Set<string>()
 const readySessions = new Set<string>()
@@ -225,6 +215,8 @@ function getFailedReadinessSessions(manager: object): Map<string, { sessionId: s
 
 describe('TmuxSessionManager', () => {
   beforeEach(() => {
+    mock.restore()
+    registerModuleMocks()
     mockQueryWindowState.mockClear()
     mockPaneExists.mockClear()
     mockExecuteActions.mockClear()

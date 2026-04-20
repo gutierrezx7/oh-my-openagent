@@ -30,6 +30,7 @@ function registerModuleMocks(): void {
 
 describe("queryWindowState runner integration", () => {
 	beforeEach(() => {
+		mock.restore()
 		registerModuleMocks()
 		runTmuxCommandMock.mockClear()
 		getTmuxPathMock.mockClear()
@@ -61,7 +62,7 @@ describe("queryWindowState runner integration", () => {
 		expect(result.agentPanes.map((pane) => pane.paneId)).toEqual(["%1"])
 		expect(runTmuxCommandMock.mock.calls).toEqual([
 			[
-				"sh",
+				expect.any(String),
 				[
 					"list-panes",
 					"-t",

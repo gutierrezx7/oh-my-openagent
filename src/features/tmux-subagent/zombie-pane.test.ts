@@ -32,32 +32,31 @@ const mockSpawnTmuxSession = mock(async () => ({ success: true, paneId: "%sessio
 const mockIsInsideTmux = mock<() => boolean>(() => true)
 const mockGetCurrentPaneId = mock<() => string | undefined>(() => "%0")
 
-mock.module("./pane-state-querier", () => ({
-  queryWindowState: mockQueryWindowState,
-}))
+function registerModuleMocks(): void {
+  mock.module("./action-executor", () => ({
+    executeAction: mockExecuteAction,
+    executeActions: mockExecuteActions,
+  }))
 
-mock.module("./action-executor", () => ({
-  executeAction: mockExecuteAction,
-  executeActions: mockExecuteActions,
-}))
-
-mock.module("../../shared/tmux", () => ({
-  isInsideTmux: mockIsInsideTmux,
-  getCurrentPaneId: mockGetCurrentPaneId,
-  POLL_INTERVAL_BACKGROUND_MS: 10,
-  SESSION_READY_POLL_INTERVAL_MS: 10,
-  SESSION_READY_TIMEOUT_MS: 50,
-  SESSION_MISSING_GRACE_MS: 1_000,
-  spawnTmuxWindow: mockSpawnTmuxWindow,
-  spawnTmuxSession: mockSpawnTmuxSession,
-  SESSION_TIMEOUT_MS: 600_000,
-}))
+  mock.module("../../shared/tmux", () => ({
+    isInsideTmux: mockIsInsideTmux,
+    getCurrentPaneId: mockGetCurrentPaneId,
+    POLL_INTERVAL_BACKGROUND_MS: 10,
+    SESSION_READY_POLL_INTERVAL_MS: 10,
+    SESSION_READY_TIMEOUT_MS: 50,
+    SESSION_MISSING_GRACE_MS: 1_000,
+    spawnTmuxWindow: mockSpawnTmuxWindow,
+    spawnTmuxSession: mockSpawnTmuxSession,
+    SESSION_TIMEOUT_MS: 600_000,
+  }))
+}
 
 afterAll(() => { mock.restore() })
 
 const mockTmuxDeps: TmuxUtilDeps = {
   isInsideTmux: mockIsInsideTmux,
   getCurrentPaneId: mockGetCurrentPaneId,
+  queryWindowState: mockQueryWindowState,
 }
 
 function createConfig(): TmuxConfig {
@@ -161,6 +160,8 @@ function createManager(
 
 describe("TmuxSessionManager zombie pane handling", () => {
   beforeEach(() => {
+    mock.restore()
+    registerModuleMocks()
     mockQueryWindowState.mockClear()
     mockExecuteAction.mockClear()
     mockExecuteActions.mockClear()
