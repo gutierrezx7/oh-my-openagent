@@ -39,6 +39,7 @@ import { dispatchOpenClawEvent } from "../openclaw/runtime-dispatch";
 import { createTeamIdleWakeHint } from "../hooks/team-session-events/team-idle-wake-hint";
 import { createTeamLeadOrphanHandler } from "../hooks/team-session-events/team-lead-orphan-handler";
 import { createTeamMemberErrorHandler } from "../hooks/team-session-events/team-member-error-handler";
+import { createTeamMemberStatusHandler } from "../hooks/team-session-events/team-member-status-handler";
 
 import type { CreatedHooks } from "../create-hooks";
 import type { Managers } from "../create-managers";
@@ -293,6 +294,9 @@ export function createEventHandler(args: {
   const teamMemberErrorHandler = teamModeConfig
     ? createTeamMemberErrorHandler(teamModeConfig)
     : undefined;
+  const teamMemberStatusHandler = teamModeConfig
+    ? createTeamMemberStatusHandler(teamModeConfig)
+    : undefined;
   const teamIdleWakeHint = teamModeConfig && pluginContext.client.session?.promptAsync
     ? createTeamIdleWakeHint({
         directory: pluginContext.directory,
@@ -508,6 +512,7 @@ export function createEventHandler(args: {
       }
 
       await runEventHookSafely("teamLeadOrphanHandler", teamLeadOrphanHandler, input);
+      await runEventHookSafely("teamMemberStatusHandler", teamMemberStatusHandler, input);
     }
 
     if (event.type === "message.removed") {
@@ -533,6 +538,7 @@ export function createEventHandler(args: {
 
     if (event.type === "session.idle") {
       await runEventHookSafely("teamIdleWakeHint", teamIdleWakeHint, input);
+      await runEventHookSafely("teamMemberStatusHandler", teamMemberStatusHandler, input);
     }
 
     if (event.type === "message.updated") {
