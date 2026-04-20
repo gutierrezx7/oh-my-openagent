@@ -1262,6 +1262,19 @@ export class BackgroundManager {
       canRetry,
     })
 
+    const sessionID = task.sessionID
+    if (sessionID) {
+      const sessionStillAlive = await this.verifySessionExists(sessionID)
+      if (sessionStillAlive) {
+        log("[background-agent] session.error received but session still alive, treating as transient:", {
+          taskId: task.id,
+          sessionID,
+          errorMessage: errorMsg?.slice(0, 200),
+        })
+        return
+      }
+    }
+
     task.status = "error"
     task.error = errorMsg
     task.completedAt = new Date()
