@@ -3,6 +3,7 @@ import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { canVisualize, removeTeamLayout } from "../team-layout-tmux/layout"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
+import { unregisterTeamSessionsByTeam } from "../team-session-registry"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { RuntimeState } from "../types"
 import { DELETABLE_MEMBER_STATUSES, removeWorktrees } from "./shutdown-helpers"
@@ -64,6 +65,8 @@ export async function deleteTeam(
   }
 
   await removeWorktrees([getRuntimeStateDir(resolveBaseDir(config), teamRunId)])
+
+  unregisterTeamSessionsByTeam(teamRunId)
 
   return { removedWorktrees, removedLayout }
 }

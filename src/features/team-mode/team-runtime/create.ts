@@ -9,6 +9,7 @@ import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { ensureBaseDirs, getInboxDir, getTeamSpecPath, resolveBaseDir } from "../team-registry/paths"
 import { createRuntimeState, listActiveTeams, loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
+import { registerTeamSession } from "../team-session-registry"
 import type { RuntimeState, TeamSpec } from "../types"
 import { activateTeamLayout } from "./activate-team-layout"
 import { cleanupTeamRunResources } from "./cleanup-team-run-resources"
@@ -114,8 +115,13 @@ export async function createTeamRun(
   await ensureBaseDirs(baseDir)
   const reusesCallerLeadSession = shouldReuseCallerLeadSession(spec, options?.callerAgentTypeId)
   let runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
-  if (reusesCallerLeadSession) {
+  if (reusesCallerLeadSession && spec.leadAgentId) {
     const callerLeadSubagentType = options?.callerAgentTypeId
+    registerTeamSession(leadSessionId, {
+      teamRunId: runtimeState.teamRunId,
+      memberName: spec.leadAgentId,
+      role: "lead",
+    })
     runtimeState = await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({
       ...currentState,
       members: currentState.members.map((member) => member.name === spec.leadAgentId
@@ -180,6 +186,11 @@ export async function createTeamRun(
           })
           resource.taskId = task.id
           const sessionId = await waitForTaskSessionId(bgMgr, task, deadlineAt)
+          registerTeamSession(sessionId, {
+            teamRunId: runtimeState.teamRunId,
+            memberName: member.name,
+            role: member.name === spec.leadAgentId ? "lead" : "member",
+          })
           const persistedModel = resolvedMember.model
             ? {
                 providerID: resolvedMember.model.providerID,

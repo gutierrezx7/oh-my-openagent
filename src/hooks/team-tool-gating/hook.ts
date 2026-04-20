@@ -1,6 +1,7 @@
 import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import { lookupTeamSession } from "../../features/team-mode/team-session-registry"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { listActiveTeams, loadRuntimeState } from "../../features/team-mode/team-state-store"
 
@@ -24,7 +25,21 @@ function getStringArg(args: Record<string, unknown>, key: string): string | unde
   return typeof value === "string" ? value : undefined
 }
 
+function resolveParticipantFromRegistry(sessionID: string): TeamParticipant | undefined {
+  const entry = lookupTeamSession(sessionID)
+  if (!entry) return undefined
+  if (entry.role === "lead") {
+    return { role: "lead", teamRunId: entry.teamRunId }
+  }
+  return { role: "member", teamRunId: entry.teamRunId, memberName: entry.memberName }
+}
+
 async function resolveParticipant(sessionID: string, config: TeamModeConfig): Promise<TeamParticipant> {
+  const fromRegistry = resolveParticipantFromRegistry(sessionID)
+  if (fromRegistry) {
+    return fromRegistry
+  }
+
   const activeTeams = await listActiveTeams(config)
 
   for (const activeTeam of activeTeams) {

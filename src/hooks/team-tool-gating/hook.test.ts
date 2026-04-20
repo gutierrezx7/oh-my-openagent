@@ -6,6 +6,10 @@ import path from "node:path"
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
+import {
+  clearTeamSessionRegistry,
+  registerTeamSession,
+} from "../../features/team-mode/team-session-registry"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { createTeamToolGating } from "./hook"
@@ -64,9 +68,11 @@ describe("createTeamToolGating", () => {
 
   beforeEach(() => {
     temporaryDirectories.length = 0
+    clearTeamSessionRegistry()
   })
 
   afterEach(async () => {
+    clearTeamSessionRegistry()
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
   })
 
@@ -185,5 +191,87 @@ describe("createTeamToolGating", () => {
 
     // then
     await expect(result).resolves.toBeUndefined()
+  })
+
+  test("allows team_send_message during the spawn race when runtime state lacks the member's sessionId but the registry already has it", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    const staleRuntimeState: RuntimeState = {
+      ...createRuntimeState(),
+      members: [
+        { name: "m1", agentType: "general-purpose", status: "pending", pendingInjectedMessageIds: [] },
+        { name: "m2", agentType: "general-purpose", status: "pending", pendingInjectedMessageIds: [] },
+      ],
+    }
+    await seedTeams(baseDir, staleRuntimeState)
+    registerTeamSession("just-spawned-session", {
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      memberName: "m1",
+      role: "member",
+    })
+
+    // when
+    const result = runHook("team_send_message", "just-spawned-session", { teamRunId: "11111111-1111-4111-8111-111111111111" }, undefined, baseDir)
+
+    // then
+    await expect(result).resolves.toBeUndefined()
+  })
+
+  test("allows team_send_message from a lead whose session is tracked only in the registry", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    const staleRuntimeState: RuntimeState = {
+      ...createRuntimeState(),
+      leadSessionId: undefined,
+      members: [
+        { name: "lead", agentType: "leader", status: "pending", pendingInjectedMessageIds: [] },
+      ],
+    }
+    await seedTeams(baseDir, staleRuntimeState)
+    registerTeamSession("caller-lead-session", {
+      teamRunId: "11111111-1111-4111-8111-111111111111",
+      memberName: "lead",
+      role: "lead",
+    })
+
+    // when
+    const result = runHook("team_send_message", "caller-lead-session", { teamRunId: "11111111-1111-4111-8111-111111111111" }, undefined, baseDir)
+
+    // then
+    await expect(result).resolves.toBeUndefined()
+  })
+
+  test("rejects team_send_message when the session is not in the registry and not in runtime state", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    await seedTeams(baseDir, createRuntimeState())
+
+    // when
+    const result = runHook("team_send_message", "unknown-session", { teamRunId: "11111111-1111-4111-8111-111111111111" }, undefined, baseDir)
+
+    // then
+    await expect(result).rejects.toThrow("team-mode tool team_send_message denied: not a participant of team 11111111-1111-4111-8111-111111111111")
+  })
+
+  test("rejects team_send_message when the registry only has the caller for a different team than the requested teamRunId", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-tool-gating-"))
+    temporaryDirectories.push(baseDir)
+    const emptyState: RuntimeState = { ...createRuntimeState(), members: [] }
+    await seedTeams(baseDir, emptyState)
+    registerTeamSession("cross-team-session", {
+      teamRunId: "22222222-2222-4222-8222-222222222222",
+      memberName: "other-team-member",
+      role: "member",
+    })
+
+    // when
+    const result = runHook("team_send_message", "cross-team-session", { teamRunId: "11111111-1111-4111-8111-111111111111" }, undefined, baseDir)
+
+    // then
+    await expect(result).rejects.toThrow("denied: not a participant of team 11111111-1111-4111-8111-111111111111")
   })
 })
