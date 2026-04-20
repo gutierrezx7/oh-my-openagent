@@ -10,6 +10,7 @@ export async function replaceTmuxPane(
 	description: string,
 	config: TmuxConfig,
 	serverUrl: string,
+	directory: string,
 ): Promise<SpawnPaneResult> {
 	const [{ log }, { runTmuxCommand }] = await Promise.all([
 		import("../../logger"),
@@ -35,7 +36,8 @@ export async function replaceTmuxPane(
 
 	const shell = process.env.SHELL || "/bin/sh"
 	const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
-	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${sessionId}"`
+	const escapedDirectory = shellEscapeForDoubleQuotedCommand(directory)
+	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${sessionId} --dir ${escapedDirectory}"`
 
 	const result = await runTmuxCommand(tmux, ["respawn-pane", "-k", "-t", paneId, opencodeCmd])
 

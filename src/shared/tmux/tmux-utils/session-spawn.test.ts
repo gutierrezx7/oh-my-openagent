@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test"
 
 import type { TmuxConfig } from "../../../config/schema"
+import { shellEscapeForDoubleQuotedCommand } from "../../shell-env"
 import type { TmuxCommandResult } from "../runner"
 
 const sessionSpawnSpecifier = import.meta.resolve("./session-spawn")
@@ -31,6 +32,29 @@ const isServerRunningMock = mock(async (): Promise<boolean> => true)
 const getTmuxPathMock = mock(async (): Promise<string | undefined> => "sh")
 const logMock = mock(() => undefined)
 
+function toStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		throw new Error("Expected array value")
+	}
+
+	const items: string[] = []
+	for (const item of value) {
+		items.push(String(item))
+	}
+	return items
+}
+
+function getRunTmuxCommandCall(index: number): [string, string[]] {
+	const call = Reflect.get(runTmuxCommandMock.mock.calls, index)
+	const command = Reflect.get(call, 0)
+	const args = Reflect.get(call, 1)
+	if (!Array.isArray(call) || typeof command !== "string" || !Array.isArray(args)) {
+		throw new Error(`Expected tmux runner call at index ${index}`)
+	}
+
+	return [command, toStringArray(args)]
+}
+
 async function loadSpawnTmuxSession(): Promise<typeof import("./session-spawn").spawnTmuxSession> {
 	const module = await import(`${sessionSpawnSpecifier}?test=${crypto.randomUUID()}`)
 	return module.spawnTmuxSession
@@ -53,11 +77,19 @@ describe("spawnTmuxSession runner integration", () => {
 		getTmuxPathMock.mockClear()
 		logMock.mockClear()
 
-		runTmuxCommandMock
-			.mockResolvedValueOnce({ success: true, output: "120,40", stdout: "120,40", stderr: "", exitCode: 0 })
-			.mockResolvedValueOnce({ success: false, output: "", stdout: "", stderr: "", exitCode: 1 })
-			.mockResolvedValueOnce({ success: true, output: "%42", stdout: "%42", stderr: "", exitCode: 0 })
-			.mockResolvedValueOnce({ success: true, output: "", stdout: "", stderr: "", exitCode: 0 })
+		const tmuxCommandResults: TmuxCommandResult[] = [
+			{ success: true, output: "120,40", stdout: "120,40", stderr: "", exitCode: 0 },
+			{ success: false, output: "", stdout: "", stderr: "", exitCode: 1 },
+			{ success: true, output: "%42", stdout: "%42", stderr: "", exitCode: 0 },
+			{ success: true, output: "", stdout: "", stderr: "", exitCode: 0 },
+		]
+		runTmuxCommandMock.mockImplementation(async (): Promise<TmuxCommandResult> => {
+			const nextResult = tmuxCommandResults.shift()
+			if (!nextResult) {
+				throw new Error("No more tmux command results configured")
+			}
+			return nextResult
+		})
 		isInsideTmuxMock.mockReturnValue(true)
 		isServerRunningMock.mockResolvedValue(true)
 		getTmuxPathMock.mockResolvedValue("sh")
@@ -66,24 +98,29 @@ describe("spawnTmuxSession runner integration", () => {
 	it("#given source pane available #when spawnTmuxSession called #then delegates display, has-session, new-session, and select-pane to shared runner", async () => {
 		// given
 		const spawnTmuxSession = await loadSpawnTmuxSession()
+		const directory = "/tmp/omo-project/(session)"
+		const escapedDirectory = shellEscapeForDoubleQuotedCommand(directory)
 
 		// when
-		const result = await spawnTmuxSession("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", "%0")
+		const result = await spawnTmuxSession("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", directory, "%0")
 
 		// then
+		const displayCall = getRunTmuxCommandCall(0)
+		const hasSessionCall = getRunTmuxCommandCall(1)
+		const newSessionCall = getRunTmuxCommandCall(2)
+		const selectPaneCall = getRunTmuxCommandCall(3)
 		expect(result).toEqual({ success: true, paneId: "%42" })
-		expect(runTmuxCommandMock).toHaveBeenNthCalledWith(1,
-			expect.any(String),
-			["display", "-p", "-t", "%0", "#{window_width},#{window_height}"],
-		)
-		expect(runTmuxCommandMock).toHaveBeenNthCalledWith(2, expect.any(String), ["has-session", "-t", expect.stringContaining("omo-agents-")])
-		expect(runTmuxCommandMock).toHaveBeenNthCalledWith(3,
-			expect.any(String),
-			expect.arrayContaining(["new-session", "-d", "-s", expect.stringContaining("omo-agents-")]),
-		)
-		expect(runTmuxCommandMock).toHaveBeenNthCalledWith(4,
-			expect.any(String),
-			["select-pane", "-t", "%42", "-T", "omo-subagent-worker"],
-		)
+		expect(displayCall[1]).toEqual(["display", "-p", "-t", "%0", "#{window_width},#{window_height}"])
+		expect(hasSessionCall[1][0]).toBe("has-session")
+		expect(hasSessionCall[1][1]).toBe("-t")
+		expect(hasSessionCall[1][2]?.startsWith("omo-agents-")).toBe(true)
+		expect(newSessionCall[1].slice(0, 4)).toEqual(["new-session", "-d", "-s", newSessionCall[1][3]])
+		expect(String(newSessionCall[1][3]).startsWith("omo-agents-")).toBe(true)
+		expect(selectPaneCall[1]).toEqual(["select-pane", "-t", "%42", "-T", "omo-subagent-worker"])
+		const newSessionCommand = newSessionCall[1][newSessionCall[1].length - 1]
+		if (newSessionCommand === undefined) {
+			throw new Error("Expected new-session command")
+		}
+		expect(newSessionCommand).toContain(` --dir ${escapedDirectory}`)
 	})
 })

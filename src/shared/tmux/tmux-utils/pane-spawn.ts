@@ -11,6 +11,7 @@ export async function spawnTmuxPane(
 	description: string,
 	config: TmuxConfig,
 	serverUrl: string,
+	directory: string,
 	targetPaneId?: string,
 	splitDirection: SplitDirection = "-h",
 ): Promise<SpawnPaneResult> {
@@ -53,7 +54,8 @@ export async function spawnTmuxPane(
 
 	const shell = process.env.SHELL || "/bin/sh"
 	const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
-	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${sessionId}"`
+	const escapedDirectory = shellEscapeForDoubleQuotedCommand(directory)
+	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${sessionId} --dir ${escapedDirectory}"`
 
 	const args = [
 		"split-window",

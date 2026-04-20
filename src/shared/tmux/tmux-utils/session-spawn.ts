@@ -37,6 +37,7 @@ export async function spawnTmuxSession(
 	description: string,
 	config: TmuxConfig,
 	serverUrl: string,
+	directory: string,
 	sourcePaneId?: string,
 ): Promise<SpawnPaneResult> {
 	const [{ log }, { runTmuxCommand }] = await Promise.all([
@@ -77,7 +78,8 @@ export async function spawnTmuxSession(
 	const shell = process.env.SHELL || "/bin/sh"
 	const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
 	const escapedSessionId = shellEscapeForDoubleQuotedCommand(sessionId)
-	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${escapedSessionId}"`
+	const escapedDirectory = shellEscapeForDoubleQuotedCommand(directory)
+	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${escapedSessionId} --dir ${escapedDirectory}"`
 
 	const sizeArgs: string[] = []
 	if (sourcePaneId) {

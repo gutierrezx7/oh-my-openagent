@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test"
 
 import type { TmuxConfig } from "../../../config/schema"
+import { shellEscapeForDoubleQuotedCommand } from "../../shell-env"
 import type { TmuxCommandResult } from "../runner"
 
 const windowSpawnSpecifier = import.meta.resolve("./window-spawn")
@@ -31,6 +32,29 @@ const isServerRunningMock = mock(async (): Promise<boolean> => true)
 const getTmuxPathMock = mock(async (): Promise<string | undefined> => "sh")
 const logMock = mock(() => undefined)
 
+function toStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		throw new Error("Expected array value")
+	}
+
+	const items: string[] = []
+	for (const item of value) {
+		items.push(String(item))
+	}
+	return items
+}
+
+function getRunTmuxCommandCall(index: number): [string, string[]] {
+	const call = Reflect.get(runTmuxCommandMock.mock.calls, index)
+	const command = Reflect.get(call, 0)
+	const args = Reflect.get(call, 1)
+	if (!Array.isArray(call) || typeof command !== "string" || !Array.isArray(args)) {
+		throw new Error(`Expected tmux runner call at index ${index}`)
+	}
+
+	return [command, toStringArray(args)]
+}
+
 async function loadSpawnTmuxWindow(): Promise<typeof import("./window-spawn").spawnTmuxWindow> {
 	const module = await import(`${windowSpawnSpecifier}?test=${crypto.randomUUID()}`)
 	return module.spawnTmuxWindow
@@ -53,9 +77,17 @@ describe("spawnTmuxWindow runner integration", () => {
 		getTmuxPathMock.mockClear()
 		logMock.mockClear()
 
-		runTmuxCommandMock
-			.mockResolvedValueOnce({ success: true, output: "%42", stdout: "%42", stderr: "", exitCode: 0 })
-			.mockResolvedValueOnce({ success: true, output: "", stdout: "", stderr: "", exitCode: 0 })
+		const tmuxCommandResults: TmuxCommandResult[] = [
+			{ success: true, output: "%42", stdout: "%42", stderr: "", exitCode: 0 },
+			{ success: true, output: "", stdout: "", stderr: "", exitCode: 0 },
+		]
+		runTmuxCommandMock.mockImplementation(async (): Promise<TmuxCommandResult> => {
+			const nextResult = tmuxCommandResults.shift()
+			if (!nextResult) {
+				throw new Error("No more tmux command results configured")
+			}
+			return nextResult
+		})
 		isInsideTmuxMock.mockReturnValue(true)
 		isServerRunningMock.mockResolvedValue(true)
 		getTmuxPathMock.mockResolvedValue("sh")
@@ -64,19 +96,22 @@ describe("spawnTmuxWindow runner integration", () => {
 	it("#given healthy tmux environment #when spawnTmuxWindow called #then delegates new-window and select-pane to shared runner", async () => {
 		// given
 		const spawnTmuxWindow = await loadSpawnTmuxWindow()
+		const directory = "/tmp/omo-project/(window)"
+		const escapedDirectory = shellEscapeForDoubleQuotedCommand(directory)
 
 		// when
-		const result = await spawnTmuxWindow("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234")
+		const result = await spawnTmuxWindow("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", directory)
 
 		// then
+		const firstCall = getRunTmuxCommandCall(0)
+		const secondCall = getRunTmuxCommandCall(1)
 		expect(result).toEqual({ success: true, paneId: "%42" })
-		expect(runTmuxCommandMock.mock.calls[0]).toEqual([
-			expect.any(String),
-			expect.arrayContaining(["new-window", "-d", "-n", "omo-agents", "-P", "-F", "#{pane_id}"]),
-		])
-		expect(runTmuxCommandMock.mock.calls[1]).toEqual([
-			expect.any(String),
-			["select-pane", "-t", "%42", "-T", "omo-subagent-worker"],
-		])
+		expect(firstCall[1].slice(0, 7)).toEqual(["new-window", "-d", "-n", "omo-agents", "-P", "-F", "#{pane_id}"])
+		expect(secondCall[1]).toEqual(["select-pane", "-t", "%42", "-T", "omo-subagent-worker"])
+		const newWindowCommand = firstCall[1][7]
+		if (newWindowCommand === undefined) {
+			throw new Error("Expected new-window command")
+		}
+		expect(newWindowCommand).toContain(` --dir ${escapedDirectory}`)
 	})
 })
