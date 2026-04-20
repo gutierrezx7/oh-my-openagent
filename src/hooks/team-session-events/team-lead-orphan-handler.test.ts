@@ -8,6 +8,10 @@ import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import {
+  clearTeamSessionRegistry,
+  registerTeamSession,
+} from "../../features/team-mode/team-session-registry"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { createTeamLeadOrphanHandler } from "./team-lead-orphan-handler"
@@ -59,6 +63,7 @@ async function seedRuntimeState(runtimeState: RuntimeState, config: TeamModeConf
 }
 
 afterEach(async () => {
+  clearTeamSessionRegistry()
   await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
     await rm(directoryPath, { recursive: true, force: true })
   }))
@@ -84,5 +89,67 @@ describe("createTeamLeadOrphanHandler", () => {
     // then
     const runtimeState = await loadRuntimeState(teamRunId, config)
     expect(runtimeState.status).toBe("orphaned")
+  })
+
+  test("orphanes the team during the spawn race when the registry tracks the fresh lead session before disk state persists it", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    await seedRuntimeState({
+      ...createRuntimeState(teamRunId),
+      leadSessionId: undefined,
+    }, config)
+    registerTeamSession("lead-session", {
+      teamRunId,
+      memberName: "lead",
+      role: "lead",
+    })
+    const handler = createTeamLeadOrphanHandler(config)
+
+    // when
+    await handler({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "lead-session" } },
+      },
+    })
+
+    // then
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+    expect(runtimeState.status).toBe("orphaned")
+  })
+
+  test("falls back to disk lookup when the registry points the lead session at the wrong teamRunId", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const correctTeamRunId = randomUUID()
+    const wrongTeamRunId = randomUUID()
+    await seedRuntimeState(createRuntimeState(correctTeamRunId), config)
+    await seedRuntimeState({
+      ...createRuntimeState(wrongTeamRunId),
+      leadSessionId: "other-lead-session",
+    }, config)
+    registerTeamSession("lead-session", {
+      teamRunId: wrongTeamRunId,
+      memberName: "lead",
+      role: "lead",
+    })
+    const handler = createTeamLeadOrphanHandler(config)
+
+    // when
+    await handler({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "lead-session" } },
+      },
+    })
+
+    // then
+    const correctRuntimeState = await loadRuntimeState(correctTeamRunId, config)
+    const wrongRuntimeState = await loadRuntimeState(wrongTeamRunId, config)
+    expect(correctRuntimeState.status).toBe("orphaned")
+    expect(wrongRuntimeState.status).toBe("active")
   })
 })
