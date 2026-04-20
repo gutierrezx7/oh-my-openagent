@@ -1356,6 +1356,39 @@ describe('TmuxSessionManager', () => {
       expect(mockSpawnTmuxPane).toHaveBeenCalledTimes(1)
     })
 
+    test('expires failed readiness sessions after the TTL elapses', async () => {
+      // given
+      mockIsInsideTmux.mockReturnValue(true)
+      const nowSpy = spyOn(Date, 'now')
+      nowSpy.mockReturnValue(0)
+      mockWaitForSessionReady.mockImplementationOnce(async () => {
+        throw new Error('session readiness timed out')
+      })
+
+      const { TmuxSessionManager } = await import('./manager')
+      const manager = new TmuxSessionManager(
+        createMockContext({ sessionStatusResult: { data: { ses_expired: { type: 'idle' } } } }),
+        createTmuxConfig({ enabled: true }),
+        mockTmuxDeps,
+      )
+
+      await manager.onSessionCreated(
+        createSessionCreatedEvent('ses_expired', 'ses_parent', 'Expired Retry Session')
+      )
+      expect(getFailedReadinessSessions(manager).has('ses_expired')).toBe(true)
+
+      // when
+      nowSpy.mockReturnValue(5 * 60 * 1000 + 1)
+      manager.onEvent({ type: 'session.idle', properties: { sessionID: 'ses_expired' } })
+      await flushMicrotasks(20)
+
+      // then
+      expect(mockSpawnTmuxPane).toHaveBeenCalledTimes(0)
+      expect(getFailedReadinessSessions(manager).has('ses_expired')).toBe(false)
+
+      nowSpy.mockRestore()
+    })
+
     test('#given duplicate session.created triggers while readiness is pending #when readiness resolves #then only one pane spawn runs', async () => {
       // given
       mockIsInsideTmux.mockReturnValue(true)

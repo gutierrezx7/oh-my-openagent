@@ -40,9 +40,13 @@ interface DeferredSession {
   retryIsolatedContainer: boolean
 }
 
-interface FailedReadinessSession {
+interface FailedReadinessSessionSeed {
   sessionId: string
   title: string
+}
+
+interface FailedReadinessSession extends FailedReadinessSessionSeed {
+  rememberedAt: number
 }
 
 export interface TmuxUtilDeps {
@@ -58,6 +62,8 @@ const defaultTmuxDeps: TmuxUtilDeps = {
 }
 
 const DEFERRED_SESSION_TTL_MS = 5 * 60 * 1000
+const FAILED_READINESS_SESSION_TTL_MS = 5 * 60 * 1000
+const FAILED_READINESS_SWEEP_INTERVAL_MS = 60 * 1000
 const MAX_DEFERRED_QUEUE_SIZE = 20
 const MAX_CLOSE_RETRY_COUNT = 3
 const MAX_ISOLATED_CONTAINER_NULL_STATE_COUNT = 2
@@ -71,6 +77,7 @@ export class TmuxSessionManager {
   private sessions = new Map<string, TrackedSession>()
   private pendingSessions = new Set<string>()
   private failedReadinessSessions = new Map<string, FailedReadinessSession>()
+  private failedReadinessSweepInterval?: ReturnType<typeof setInterval>
   private spawnQueue: Promise<void> = Promise.resolve()
   private deferredSessions = new Map<string, DeferredSession>()
   private deferredQueue: string[] = []
@@ -570,17 +577,93 @@ export class TmuxSessionManager {
   }
 
   private rememberFailedReadinessSession(
-    session: FailedReadinessSession,
+    session: FailedReadinessSessionSeed,
   ): void {
-    this.failedReadinessSessions.set(session.sessionId, session)
+    this.failedReadinessSessions.set(session.sessionId, {
+      ...session,
+      rememberedAt: Date.now(),
+    })
+    this.startFailedReadinessSweep()
   }
 
   private clearFailedReadinessSession(sessionId: string): void {
     this.failedReadinessSessions.delete(sessionId)
+    if (this.failedReadinessSessions.size === 0) {
+      this.stopFailedReadinessSweep()
+    }
+  }
+
+  private startFailedReadinessSweep(): void {
+    if (this.failedReadinessSweepInterval) {
+      return
+    }
+
+    this.failedReadinessSweepInterval = setInterval(() => {
+      this.sweepExpiredFailedReadinessSessions()
+    }, FAILED_READINESS_SWEEP_INTERVAL_MS)
+  }
+
+  private stopFailedReadinessSweep(): void {
+    if (!this.failedReadinessSweepInterval) {
+      return
+    }
+
+    clearInterval(this.failedReadinessSweepInterval)
+    this.failedReadinessSweepInterval = undefined
+  }
+
+  private isFailedReadinessSessionExpired(
+    session: FailedReadinessSession,
+    now: number,
+  ): boolean {
+    return now - session.rememberedAt >= FAILED_READINESS_SESSION_TTL_MS
+  }
+
+  private sweepExpiredFailedReadinessSessions(): void {
+    const now = Date.now()
+
+    for (const [sessionId, failedReadinessSession] of this.failedReadinessSessions.entries()) {
+      if (!this.isFailedReadinessSessionExpired(failedReadinessSession, now)) {
+        continue
+      }
+
+      this.failedReadinessSessions.delete(sessionId)
+      log("[tmux-session-manager] expired failed readiness session", {
+        sessionId,
+        ttlMs: FAILED_READINESS_SESSION_TTL_MS,
+      })
+    }
+
+    if (this.failedReadinessSessions.size === 0) {
+      this.stopFailedReadinessSweep()
+    }
+  }
+
+  private getFailedReadinessSession(sessionId: string): FailedReadinessSession | undefined {
+    const failedReadinessSession = this.failedReadinessSessions.get(sessionId)
+    if (!failedReadinessSession) {
+      return undefined
+    }
+
+    if (!this.isFailedReadinessSessionExpired(failedReadinessSession, Date.now())) {
+      return failedReadinessSession
+    }
+
+    this.failedReadinessSessions.delete(sessionId)
+    log("[tmux-session-manager] expired failed readiness session on access", {
+      sessionId,
+      ttlMs: FAILED_READINESS_SESSION_TTL_MS,
+    })
+
+    if (this.failedReadinessSessions.size === 0) {
+      this.stopFailedReadinessSweep()
+    }
+
+    return undefined
   }
 
   private async spawnPendingSession(args: {
-    session: FailedReadinessSession
+    session: FailedReadinessSessionSeed
     stage: SpawnStage
     rememberReadinessFailure: boolean
   }): Promise<void> {
@@ -761,7 +844,7 @@ export class TmuxSessionManager {
   }
 
   private async retryFailedReadinessSession(sessionId: string): Promise<void> {
-    const failedReadinessSession = this.failedReadinessSessions.get(sessionId)
+    const failedReadinessSession = this.getFailedReadinessSession(sessionId)
     if (!failedReadinessSession) {
       return
     }
@@ -1116,6 +1199,7 @@ export class TmuxSessionManager {
     this.deferredQueue = []
     this.deferredSessions.clear()
     this.failedReadinessSessions.clear()
+    this.stopFailedReadinessSweep()
     this.pollingManager.stopPolling()
 
     if (this.sessions.size > 0) {
