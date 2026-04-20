@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, test } from "bun:test"
 import { access, mkdir, rm } from "node:fs/promises"
 
 import { sendMessage } from "../team-mailbox/send"
@@ -155,6 +155,75 @@ describe("team-runtime shutdown", () => {
       () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
       () => undefined,
     )
+  })
+
+  test("deletes team even with active members when force=true", async () => {
+    // given
+    const fixture = await createFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    await updateMemberStatuses(fixture.teamRunId, fixture.config, {
+      "member-a": "running",
+      "member-b": "running",
+    })
+    await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
+      await mkdir(worktreePath, { recursive: true })
+    }))
+
+    // when
+    const result = await deleteTeam(fixture.teamRunId, fixture.config, undefined, undefined, { force: true })
+
+    // then
+    expect(result.removedLayout).toBe(false)
+    expect(result.removedWorktrees.sort()).toEqual([...fixture.worktreePaths].sort())
+    await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
+      await access(worktreePath).then(
+        () => { throw new Error(`expected ${worktreePath} to be removed`) },
+        () => undefined,
+      )
+    }))
+    const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
+    await access(runtimeStateDirectory).then(
+      () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
+      () => undefined,
+    )
+  })
+
+  test("cancels team background tasks before deleting when force=true", async () => {
+    // given
+    const fixture = await createFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    await updateMemberStatuses(fixture.teamRunId, fixture.config, {
+      "member-a": "running",
+      "member-b": "idle",
+    })
+    const runtimeStatusesDuringCancellation: Array<{ teamStatus: string; memberStatuses: string[] }> = []
+    const cancelTaskMock = mock(async () => {
+      const runtimeState = await loadRuntimeState(fixture.teamRunId, fixture.config)
+      runtimeStatusesDuringCancellation.push({
+        teamStatus: runtimeState.status,
+        memberStatuses: runtimeState.members
+          .filter((member) => member.agentType !== "leader")
+          .map((member) => member.status),
+      })
+      return true
+    })
+    const bgMgr = {
+      getTasksByParentSession: () => [
+        { id: "team-task-a", sessionID: "session-a", parentMessageID: `team-create:${fixture.teamRunId}:member-a` },
+        { id: "team-task-b", sessionID: "session-b", parentMessageID: `team-create:${fixture.teamRunId}:member-b` },
+      ],
+      cancelTask: cancelTaskMock,
+    }
+
+    // when
+    await deleteTeam(fixture.teamRunId, fixture.config, undefined, bgMgr as never, { force: true })
+
+    // then
+    expect(cancelTaskMock).toHaveBeenCalledTimes(2)
+    expect(runtimeStatusesDuringCancellation).toEqual([
+      { teamStatus: "active", memberStatuses: ["running", "idle"] },
+      { teamStatus: "active", memberStatuses: ["running", "idle"] },
+    ])
   })
 
   test("blocks mailbox writes while the team is deleting", async () => {

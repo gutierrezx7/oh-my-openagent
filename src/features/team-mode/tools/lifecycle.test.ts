@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 
 import { normalizeTeamSpecInput } from "../team-registry/team-spec-input-normalizer"
 import type { RuntimeState } from "../types"
@@ -39,6 +39,10 @@ const {
 } = await import("./lifecycle")
 
 describe("team lifecycle tools", () => {
+  afterAll(() => {
+    mock.restore()
+  })
+
   beforeEach(() => {
     resetLifecycleTestState()
   })
@@ -60,6 +64,29 @@ describe("team lifecycle tools", () => {
       backgroundManager,
       undefined,
       { callerAgentTypeId: undefined },
+    )
+  })
+
+  test("team_create resolves a visible sort-prefixed sisyphus caller into callerAgentTypeId", async () => {
+    // given
+    const teamCreateTool = createTeamCreateTool(config, mockClient, backgroundManager)
+    const toolContext = {
+      ...createToolContext("lead-session"),
+      agent: "00|Sisyphus",
+    }
+
+    // when
+    await teamCreateTool.execute({ inline_spec: createSpec() }, toolContext)
+
+    // then
+    expect(createTeamRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "lead-session",
+      expect.objectContaining({ client: mockClient }),
+      config,
+      backgroundManager,
+      undefined,
+      { callerAgentTypeId: "sisyphus" },
     )
   })
 
@@ -115,6 +142,20 @@ describe("team lifecycle tools", () => {
 
     // then
     expect(result).rejects.toThrow("members still active")
+  })
+
+  test("team_delete force=true succeeds even with active members", async () => {
+    // given
+    const createTool = createTeamCreateTool(config, mockClient, backgroundManager)
+    const deleteTool = createTeamDeleteTool(config, mockClient, backgroundManager)
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
+
+    // when
+    const result = parseToolResult<{ deleted: boolean }>(await deleteTool.execute({ teamRunId: created.teamRunId, force: true }, createToolContext("lead-session")))
+
+    // then
+    expect(result.deleted).toBe(true)
+    expect(hasRuntime(created.teamRunId)).toBe(false)
   })
 
   test("team_create is idempotent for the same spec and lead session", async () => {

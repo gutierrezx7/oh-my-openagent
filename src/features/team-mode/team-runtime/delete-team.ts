@@ -15,15 +15,42 @@ const DELETABLE_TEAM_STATUSES = new Set<RuntimeState["status"]>([
   "deleted",
 ])
 
+const FORCE_COMPLETABLE_MEMBER_STATUSES = new Set<RuntimeState["members"][number]["status"]>([
+  "pending",
+  "running",
+  "idle",
+])
+
 export async function deleteTeam(
   teamRunId: string,
   config: TeamModeConfig,
   tmuxMgr?: TmuxSessionManager,
   bgMgr?: BackgroundManager,
+  options?: { force?: boolean },
 ): Promise<{ removedWorktrees: string[]; removedLayout: boolean }> {
   const runtimeState = await loadRuntimeState(teamRunId, config)
   const nonLeadMembers = runtimeState.members.filter((member) => member.agentType !== "leader")
-  if (nonLeadMembers.some((member) => !DELETABLE_MEMBER_STATUSES.has(member.status))) {
+
+  if (bgMgr && runtimeState.leadSessionId) {
+    const teamMessageMarkerPrefix = `team-create:${teamRunId}:`
+    const teamTasks = bgMgr.getTasksByParentSession(runtimeState.leadSessionId)
+      .filter((task) => task.parentMessageID?.startsWith(teamMessageMarkerPrefix))
+    await Promise.all(teamTasks.map((task) => bgMgr.cancelTask(task.id, {
+      source: "team-mode-delete",
+      reason: `delete team ${teamRunId}`,
+    })))
+  }
+
+  if (options?.force === true) {
+    await transitionRuntimeState(teamRunId, (currentRuntimeState) => ({
+      ...currentRuntimeState,
+      members: currentRuntimeState.members.map((member) => (
+        member.agentType === "leader" || !FORCE_COMPLETABLE_MEMBER_STATUSES.has(member.status)
+          ? member
+          : { ...member, status: "completed" }
+      )),
+    }), config)
+  } else if (nonLeadMembers.some((member) => !DELETABLE_MEMBER_STATUSES.has(member.status))) {
     throw new Error("members still active")
   }
 
@@ -37,16 +64,6 @@ export async function deleteTeam(
         ? currentRuntimeState
         : { ...currentRuntimeState, status: "deleting" }
     ), config)
-  }
-
-  if (bgMgr && runtimeState.leadSessionId) {
-    const teamMessageMarkerPrefix = `team-create:${teamRunId}:`
-    const teamTasks = bgMgr.getTasksByParentSession(runtimeState.leadSessionId)
-      .filter((task) => task.parentMessageID?.startsWith(teamMessageMarkerPrefix))
-    await Promise.all(teamTasks.map((task) => bgMgr.cancelTask(task.id, {
-      source: "team-mode-delete",
-      reason: `delete team ${teamRunId}`,
-    })))
   }
 
   const removedLayout = tmuxMgr !== undefined && canVisualize()

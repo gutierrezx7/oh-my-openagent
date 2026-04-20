@@ -27,7 +27,7 @@ const TeamCreateArgsSchema = z.object({
   }
 })
 
-const TeamDeleteArgsSchema = z.object({ teamRunId: z.string().min(1) })
+const TeamDeleteArgsSchema = z.object({ teamRunId: z.string().min(1), force: z.boolean().optional() })
 const TeamShutdownRequestArgsSchema = z.object({ teamRunId: z.string().min(1), targetMemberName: z.string().min(1) })
 const TeamApproveShutdownArgsSchema = z.object({ teamRunId: z.string().min(1), memberName: z.string().min(1) })
 const TeamRejectShutdownArgsSchema = z.object({
@@ -141,14 +141,14 @@ export function createTeamDeleteTool(
   void client
 
   return tool({
-    description: "Delete a completed or shutdown-approved team run.",
-    args: { teamRunId: tool.schema.string() },
+    description: "Delete a completed or shutdown-approved team run. Pass force=true to tear it down even while members are still active.",
+    args: { teamRunId: tool.schema.string(), force: tool.schema.boolean().optional() },
     async execute(rawArgs, toolContext) {
       const args = TeamDeleteArgsSchema.parse(rawArgs)
       const runtimeContext = toolContext as TeamLifecycleToolContext
       const { runtimeState, participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       if (participant?.role !== "lead") throw new Error("team_delete is lead-only")
-      return JSON.stringify({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, backgroundManager)) })
+      return JSON.stringify({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, backgroundManager, { force: args.force })) })
     },
   })
 }

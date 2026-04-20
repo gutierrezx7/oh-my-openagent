@@ -101,9 +101,15 @@ export const createTeamRunMock = mock(async (spec: TeamSpec, leadSessionId: stri
   runtimes.set(teamRunId, runtimeState)
   return clone(runtimeState)
 })
-export const deleteTeamMock = mock(async (teamRunId: string) => {
+export const deleteTeamMock = mock(async (
+  teamRunId: string,
+  _config?: unknown,
+  _tmuxMgr?: unknown,
+  _bgMgr?: unknown,
+  options?: { force?: boolean },
+) => {
   const runtimeState = requireRuntime(teamRunId)
-  if (runtimeState.members.some((member) => member.agentType !== "leader" && member.status !== "shutdown_approved" && member.status !== "completed" && member.status !== "errored")) {
+  if (!options?.force && runtimeState.members.some((member) => member.agentType !== "leader" && member.status !== "shutdown_approved" && member.status !== "completed" && member.status !== "errored")) {
     throw new Error("members still active")
   }
   runtimes.delete(teamRunId)
