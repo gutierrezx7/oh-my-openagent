@@ -517,11 +517,14 @@ export class TmuxSessionManager {
     log("[tmux-session-manager] deferred attach polling stopped")
   }
 
-  private beginPendingSession(sessionId: string): boolean {
+  private beginPendingSession(
+    sessionId: string,
+    options?: { allowDeferredSession?: boolean },
+  ): boolean {
     if (
       this.sessions.has(sessionId)
       || this.pendingSessions.has(sessionId)
-      || this.deferredSessions.has(sessionId)
+      || (!options?.allowDeferredSession && this.deferredSessions.has(sessionId))
     ) {
       log("[tmux-session-manager] session already tracked or pending", { sessionId })
       return false
@@ -893,129 +896,137 @@ export class TmuxSessionManager {
       return
     }
 
-    if (Date.now() - deferred.queuedAt.getTime() > DEFERRED_SESSION_TTL_MS) {
-      this.deferredQueue.shift()
-      this.deferredSessions.delete(sessionId)
-      log("[tmux-session-manager] deferred session expired", {
-        sessionId,
-        queuedAt: deferred.queuedAt.toISOString(),
-        ttlMs: DEFERRED_SESSION_TTL_MS,
-        queueLength: this.deferredQueue.length,
-      })
-      if (this.deferredQueue.length === 0) {
-        this.stopDeferredAttachLoop()
-      }
+    if (!this.beginPendingSession(sessionId, { allowDeferredSession: true })) {
       return
     }
 
-    if (deferred.retryIsolatedContainer) {
-      const readyForIsolatedContainer = await this.ensureSessionReadyBeforeSpawn(
-        sessionId,
-        "deferred.isolated-container",
-      )
-      if (!readyForIsolatedContainer) {
-        this.removeDeferredSession(sessionId)
+    try {
+      if (Date.now() - deferred.queuedAt.getTime() > DEFERRED_SESSION_TTL_MS) {
+        this.deferredQueue.shift()
+        this.deferredSessions.delete(sessionId)
+        log("[tmux-session-manager] deferred session expired", {
+          sessionId,
+          queuedAt: deferred.queuedAt.toISOString(),
+          ttlMs: DEFERRED_SESSION_TTL_MS,
+          queueLength: this.deferredQueue.length,
+        })
+        if (this.deferredQueue.length === 0) {
+          this.stopDeferredAttachLoop()
+        }
         return
       }
 
-      const isolatedPaneId = await this.spawnInIsolatedContainer(sessionId, deferred.title)
-      if (isolatedPaneId) {
-        this.sessions.set(
+      if (deferred.retryIsolatedContainer) {
+        const readyForIsolatedContainer = await this.ensureSessionReadyBeforeSpawn(
           sessionId,
-          createTrackedSession({
+          "deferred.isolated-container",
+        )
+        if (!readyForIsolatedContainer) {
+          this.removeDeferredSession(sessionId)
+          return
+        }
+
+        const isolatedPaneId = await this.spawnInIsolatedContainer(sessionId, deferred.title)
+        if (isolatedPaneId) {
+          this.sessions.set(
+            sessionId,
+            createTrackedSession({
+              sessionId,
+              paneId: isolatedPaneId,
+              description: deferred.title,
+            }),
+          )
+          this.removeDeferredSession(sessionId)
+          this.pollingManager.startPolling()
+          log("[tmux-session-manager] deferred session attached in isolated window", {
             sessionId,
             paneId: isolatedPaneId,
-            description: deferred.title,
-          }),
-        )
-        this.removeDeferredSession(sessionId)
-        this.pollingManager.startPolling()
-        log("[tmux-session-manager] deferred session attached in isolated window", {
+          })
+          return
+        }
+      }
+
+      const effectiveSourcePaneId = this.getEffectiveSourcePaneId()
+      if (!effectiveSourcePaneId) return
+
+      const state = await this.deps.queryWindowState(effectiveSourcePaneId)
+      if (!state) {
+        this.nullStateCount += 1
+        log("[tmux-session-manager] deferred attach window state is null", {
+          nullStateCount: this.nullStateCount,
+        })
+        if (this.nullStateCount >= 3) {
+          log("[tmux-session-manager] stopping deferred attach loop after consecutive null states", {
+            nullStateCount: this.nullStateCount,
+          })
+          this.stopDeferredAttachLoop()
+        }
+        return
+      }
+      this.nullStateCount = 0
+
+      const decision = decideSpawnActions(
+        state,
+        sessionId,
+        deferred.title,
+        this.getCapacityConfig(),
+        this.getSessionMappings(),
+      )
+
+      if (!decision.canSpawn || decision.actions.length === 0) {
+        log("[tmux-session-manager] deferred session still waiting for capacity", {
           sessionId,
-          paneId: isolatedPaneId,
+          reason: decision.reason,
         })
         return
       }
-    }
 
-    const effectiveSourcePaneId = this.getEffectiveSourcePaneId()
-    if (!effectiveSourcePaneId) return
-
-    const state = await this.deps.queryWindowState(effectiveSourcePaneId)
-    if (!state) {
-      this.nullStateCount += 1
-      log("[tmux-session-manager] deferred attach window state is null", {
-        nullStateCount: this.nullStateCount,
-      })
-      if (this.nullStateCount >= 3) {
-        log("[tmux-session-manager] stopping deferred attach loop after consecutive null states", {
-          nullStateCount: this.nullStateCount,
-        })
-        this.stopDeferredAttachLoop()
+      const readyForDeferredAttach = await this.ensureSessionReadyBeforeSpawn(
+        sessionId,
+        "deferred.attach",
+      )
+      if (!readyForDeferredAttach) {
+        this.removeDeferredSession(sessionId)
+        return
       }
-      return
-    }
-    this.nullStateCount = 0
 
-    const decision = decideSpawnActions(
-      state,
-      sessionId,
-      deferred.title,
-      this.getCapacityConfig(),
-      this.getSessionMappings(),
-    )
-
-    if (!decision.canSpawn || decision.actions.length === 0) {
-      log("[tmux-session-manager] deferred session still waiting for capacity", {
-        sessionId,
-        reason: decision.reason,
+      const result = await executeActions(decision.actions, {
+        config: this.tmuxConfig,
+        directory: this.projectDirectory,
+        serverUrl: this.serverUrl,
+        windowState: state,
+        sourcePaneId: effectiveSourcePaneId,
       })
-      return
-    }
 
-    const readyForDeferredAttach = await this.ensureSessionReadyBeforeSpawn(
-      sessionId,
-      "deferred.attach",
-    )
-    if (!readyForDeferredAttach) {
+      if (!result.success || !result.spawnedPaneId) {
+        log("[tmux-session-manager] deferred session attach failed", {
+          sessionId,
+          results: result.results.map((r) => ({
+            type: r.action.type,
+            success: r.result.success,
+            error: r.result.error,
+          })),
+        })
+        return
+      }
+
+      this.sessions.set(
+        sessionId,
+        createTrackedSession({
+          sessionId,
+          paneId: result.spawnedPaneId,
+          description: deferred.title,
+        }),
+      )
       this.removeDeferredSession(sessionId)
-      return
-    }
-
-    const result = await executeActions(decision.actions, {
-      config: this.tmuxConfig,
-      directory: this.projectDirectory,
-      serverUrl: this.serverUrl,
-      windowState: state,
-      sourcePaneId: effectiveSourcePaneId,
-    })
-
-    if (!result.success || !result.spawnedPaneId) {
-      log("[tmux-session-manager] deferred session attach failed", {
-        sessionId,
-        results: result.results.map((r) => ({
-          type: r.action.type,
-          success: r.result.success,
-          error: r.result.error,
-        })),
-      })
-      return
-    }
-
-    this.sessions.set(
-      sessionId,
-      createTrackedSession({
+      this.pollingManager.startPolling()
+      log("[tmux-session-manager] deferred session attached", {
         sessionId,
         paneId: result.spawnedPaneId,
-        description: deferred.title,
-      }),
-    )
-    this.removeDeferredSession(sessionId)
-    this.pollingManager.startPolling()
-    log("[tmux-session-manager] deferred session attached", {
-      sessionId,
-      paneId: result.spawnedPaneId,
-    })
+      })
+    } finally {
+      this.pendingSessions.delete(sessionId)
+    }
   }
 
   async onSessionCreated(event: SessionCreatedEvent): Promise<void> {

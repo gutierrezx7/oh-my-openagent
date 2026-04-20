@@ -896,6 +896,46 @@ describe('TmuxSessionManager', () => {
       expect((manager as any).deferredQueue).toEqual([])
     })
 
+    test('skips deferred attach when the session is already pending through another spawn path', async () => {
+      // given
+      mockIsInsideTmux.mockReturnValue(true)
+      mockQueryWindowState.mockImplementation(async () =>
+        createWindowState({
+          windowWidth: 160,
+          windowHeight: 11,
+          agentPanes: [
+            {
+              paneId: '%1',
+              width: 80,
+              height: 11,
+              left: 80,
+              top: 0,
+              title: 'old',
+              isActive: false,
+            },
+          ],
+        })
+      )
+
+      const { TmuxSessionManager } = await import('./manager')
+      const manager = new TmuxSessionManager(createMockContext(), createTmuxConfig({ enabled: true }), mockTmuxDeps)
+
+      await manager.onSessionCreated(
+        createSessionCreatedEvent('ses_pending_race', 'ses_parent', 'Pending Race Task')
+      )
+      expect((manager as any).deferredQueue).toEqual(['ses_pending_race'])
+
+      mockQueryWindowState.mockImplementation(async () => createWindowState())
+      Reflect.get(manager, 'pendingSessions').add('ses_pending_race')
+
+      // when
+      await Reflect.get(manager, 'tryAttachDeferredSession').call(manager)
+
+      // then
+      expect(mockSpawnTmuxPane).toHaveBeenCalledTimes(0)
+      expect((manager as any).deferredQueue).toEqual(['ses_pending_race'])
+    })
+
     test('removes deferred session when session is deleted before attach', async () => {
       // given
       mockIsInsideTmux.mockReturnValue(true)
