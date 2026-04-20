@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test"
 
 import type { TmuxConfig } from "../../../config/schema"
-import { shellEscapeForDoubleQuotedCommand } from "../../shell-env"
 import type { TmuxCommandResult } from "../runner"
 
 const windowSpawnSpecifier = import.meta.resolve("./window-spawn")
@@ -55,6 +54,16 @@ function getRunTmuxCommandCall(index: number): [string, string[]] {
 	return [command, toStringArray(args)]
 }
 
+function getNewWindowCommand(): string {
+	const firstCall = getRunTmuxCommandCall(0)
+	const newWindowCommand = firstCall[1][7]
+	if (newWindowCommand === undefined) {
+		throw new Error("Expected new-window command")
+	}
+
+	return newWindowCommand
+}
+
 async function loadSpawnTmuxWindow(): Promise<typeof import("./window-spawn").spawnTmuxWindow> {
 	const module = await import(`${windowSpawnSpecifier}?test=${crypto.randomUUID()}`)
 	return module.spawnTmuxWindow
@@ -70,6 +79,7 @@ function registerModuleMocks(): void {
 
 describe("spawnTmuxWindow runner integration", () => {
 	beforeEach(() => {
+		mock.restore()
 		registerModuleMocks()
 		runTmuxCommandMock.mockClear()
 		isInsideTmuxMock.mockClear()
@@ -97,7 +107,6 @@ describe("spawnTmuxWindow runner integration", () => {
 		// given
 		const spawnTmuxWindow = await loadSpawnTmuxWindow()
 		const directory = "/tmp/omo-project/(window)"
-		const escapedDirectory = shellEscapeForDoubleQuotedCommand(directory)
 
 		// when
 		const result = await spawnTmuxWindow("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", directory)
@@ -108,10 +117,39 @@ describe("spawnTmuxWindow runner integration", () => {
 		expect(result).toEqual({ success: true, paneId: "%42" })
 		expect(firstCall[1].slice(0, 7)).toEqual(["new-window", "-d", "-n", "omo-agents", "-P", "-F", "#{pane_id}"])
 		expect(secondCall[1]).toEqual(["select-pane", "-t", "%42", "-T", "omo-subagent-worker"])
-		const newWindowCommand = firstCall[1][7]
-		if (newWindowCommand === undefined) {
-			throw new Error("Expected new-window command")
-		}
-		expect(newWindowCommand).toContain(` --dir ${escapedDirectory}`)
+		expect(getNewWindowCommand()).toContain(` --dir '${directory}'`)
+	})
+
+	it("#given directory with spaces #when spawnTmuxWindow called #then wraps --dir value in single quotes", async () => {
+		// given
+		const spawnTmuxWindow = await loadSpawnTmuxWindow()
+
+		// when
+		await spawnTmuxWindow("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", "/path with spaces/here")
+
+		// then
+		expect(getNewWindowCommand()).toContain("--dir '/path with spaces/here'")
+	})
+
+	it("#given empty directory #when spawnTmuxWindow called #then falls back to process cwd", async () => {
+		// given
+		const spawnTmuxWindow = await loadSpawnTmuxWindow()
+
+		// when
+		await spawnTmuxWindow("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", "")
+
+		// then
+		expect(getNewWindowCommand()).toContain(`--dir '${process.cwd()}'`)
+	})
+
+	it("#given directory with single quotes #when spawnTmuxWindow called #then escapes the value with POSIX-safe single quoting", async () => {
+		// given
+		const spawnTmuxWindow = await loadSpawnTmuxWindow()
+
+		// when
+		await spawnTmuxWindow("session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", "/path/with'quote")
+
+		// then
+		expect(getNewWindowCommand()).toContain("--dir '/path/with'\\''quote'")
 	})
 })

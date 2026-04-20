@@ -95,7 +95,7 @@ export class TmuxSessionManager {
   constructor(ctx: PluginInput, tmuxConfig: TmuxConfig, deps: TmuxUtilDeps = defaultTmuxDeps) {
     this.client = ctx.client
     this.tmuxConfig = tmuxConfig
-    this.projectDirectory = ctx.directory
+    this.projectDirectory = ctx.directory || process.cwd()
     this.deps = deps
     const defaultPort = process.env.OPENCODE_PORT ?? "4096"
     const fallbackUrl = `http://localhost:${defaultPort}`

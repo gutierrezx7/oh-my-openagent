@@ -1,4 +1,5 @@
 import { log } from "../../../shared"
+import { shellSingleQuote } from "../../../shared/shell-env"
 import { isServerRunning, runTmuxCommand } from "../../../shared/tmux"
 import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
@@ -15,11 +16,6 @@ export function canVisualize(): boolean { return process.env.TMUX !== undefined 
 
 function getPaneWorkingDirectory(member: TeamLayoutMember): string {
   return member.worktreePath ?? process.cwd()
-}
-
-function shellSingleQuote(value: string): string {
-  // POSIX-safe single-quote wrap: any internal single quote is closed, literal-quoted, reopened.
-  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string {

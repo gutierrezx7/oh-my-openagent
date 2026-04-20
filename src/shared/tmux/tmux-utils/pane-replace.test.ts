@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test"
 
 import type { TmuxConfig } from "../../../config/schema"
-import { shellEscapeForDoubleQuotedCommand } from "../../shell-env"
 import type { TmuxCommandResult } from "../runner"
 
 const paneReplaceSpecifier = import.meta.resolve("./pane-replace")
@@ -53,6 +52,16 @@ function getRunTmuxCommandCall(index: number): [string, string[]] {
 	return [command, toStringArray(args)]
 }
 
+function getRespawnCommand(): string {
+	const respawnCall = getRunTmuxCommandCall(1)
+	const respawnCommand = respawnCall[1][4]
+	if (respawnCommand === undefined) {
+		throw new Error("Expected respawn-pane command")
+	}
+
+	return respawnCommand
+}
+
 async function loadReplaceTmuxPane(): Promise<typeof import("./pane-replace").replaceTmuxPane> {
 	const module = await import(`${paneReplaceSpecifier}?test=${crypto.randomUUID()}`)
 	return module.replaceTmuxPane
@@ -67,6 +76,7 @@ function registerModuleMocks(): void {
 
 describe("replaceTmuxPane runner integration", () => {
 	beforeEach(() => {
+		mock.restore()
 		registerModuleMocks()
 		runTmuxCommandMock.mockClear()
 		isInsideTmuxMock.mockClear()
@@ -93,7 +103,6 @@ describe("replaceTmuxPane runner integration", () => {
 		// given
 		const replaceTmuxPane = await loadReplaceTmuxPane()
 		const directory = "/tmp/omo-project/(replace)"
-		const escapedDirectory = shellEscapeForDoubleQuotedCommand(directory)
 
 		// when
 		const result = await replaceTmuxPane("%42", "session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", directory)
@@ -106,10 +115,39 @@ describe("replaceTmuxPane runner integration", () => {
 		expect(sendKeysCall[1]).toEqual(["send-keys", "-t", "%42", "C-c"])
 		expect(respawnCall[1].slice(0, 4)).toEqual(["respawn-pane", "-k", "-t", "%42"])
 		expect(selectPaneCall[1]).toEqual(["select-pane", "-t", "%42", "-T", "omo-subagent-worker"])
-		const respawnCommand = respawnCall[1][4]
-		if (respawnCommand === undefined) {
-			throw new Error("Expected respawn-pane command")
-		}
-		expect(respawnCommand).toContain(` --dir ${escapedDirectory}`)
+		expect(getRespawnCommand()).toContain(` --dir '${directory}'`)
+	})
+
+	it("#given directory with spaces #when replaceTmuxPane called #then wraps --dir value in single quotes", async () => {
+		// given
+		const replaceTmuxPane = await loadReplaceTmuxPane()
+
+		// when
+		await replaceTmuxPane("%42", "session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", "/path with spaces/here")
+
+		// then
+		expect(getRespawnCommand()).toContain("--dir '/path with spaces/here'")
+	})
+
+	it("#given empty directory #when replaceTmuxPane called #then falls back to process cwd", async () => {
+		// given
+		const replaceTmuxPane = await loadReplaceTmuxPane()
+
+		// when
+		await replaceTmuxPane("%42", "session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", "")
+
+		// then
+		expect(getRespawnCommand()).toContain(`--dir '${process.cwd()}'`)
+	})
+
+	it("#given directory with single quotes #when replaceTmuxPane called #then escapes the value with POSIX-safe single quoting", async () => {
+		// given
+		const replaceTmuxPane = await loadReplaceTmuxPane()
+
+		// when
+		await replaceTmuxPane("%42", "session-1", "worker", enabledTmuxConfig, "http://127.0.0.1:1234", "/path/with'quote")
+
+		// then
+		expect(getRespawnCommand()).toContain("--dir '/path/with'\\''quote'")
 	})
 })
