@@ -538,6 +538,7 @@ export function createEventHandler(args: {
     }
 
     if (event.type === "session.idle") {
+      managers.tmuxSessionManager?.onEvent?.(event);
       await runEventHookSafely("teamIdleWakeHint", teamIdleWakeHint, input);
       await runEventHookSafely("teamMemberStatusHandler", teamMemberStatusHandler, input);
     }
