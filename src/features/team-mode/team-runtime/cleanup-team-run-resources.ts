@@ -4,6 +4,7 @@ import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { removeTeamLayout } from "../team-layout-tmux/layout"
+import { unregisterTeamSessionsByTeam } from "../team-session-registry"
 import { transitionRuntimeState } from "../team-state-store/store"
 import type { TeamRunCreateError } from "./create"
 
@@ -68,6 +69,8 @@ export async function cleanupTeamRunResources(args: {
     cleanupReport.errors.push(`state ${args.teamRunId}: ${normalizeError(transitionError).message}`)
     return undefined
   })
+
+  unregisterTeamSessionsByTeam(args.teamRunId)
 
   return cleanupReport
 }
