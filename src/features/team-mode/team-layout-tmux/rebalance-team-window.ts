@@ -54,7 +54,7 @@ export async function rebalanceTeamWindow(
   const [{ log }, { getTmuxPath }, { runTmuxCommand }] = await Promise.all([
     import("../../../shared"),
     import("../../../tools/interactive-bash/tmux-path-resolver"),
-    import("./tmux-runner"),
+		import("../../../shared/tmux"),
   ])
 
   const tmuxPath = await getTmuxPath()

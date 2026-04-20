@@ -1,8 +1,7 @@
 import { log } from "../../../shared"
-import { isServerRunning } from "../../../shared/tmux"
+import { isServerRunning, runTmuxCommand } from "../../../shared/tmux"
 import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
-import { runTmuxCommand } from "./tmux-runner"
 
 type TeamLayoutMember = { name: string; sessionId: string; worktreePath?: string }
 

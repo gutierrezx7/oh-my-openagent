@@ -11,22 +11,14 @@ function isProcessAlive(pid: number): boolean {
 }
 
 async function listOmoAgentSessionsViaTmux(tmux: string): Promise<string[]> {
-	const { spawn } = await import("./spawn-process")
-	const proc = spawn([tmux, "list-sessions", "-F", "#{session_name}"], {
-		stdout: "pipe",
-		stderr: "pipe",
-	})
-	const [stdout, , exitCode] = await Promise.all([
-		new Response(proc.stdout).text(),
-		new Response(proc.stderr).text(),
-		proc.exited,
-	])
+	const { runTmuxCommand } = await import("../runner")
+	const result = await runTmuxCommand(tmux, ["list-sessions", "-F", "#{session_name}"])
 
-	if (exitCode !== 0) {
+	if (result.exitCode !== 0) {
 		return []
 	}
 
-	return stdout
+	return result.output
 		.split("\n")
 		.map((line) => line.trim())
 		.filter((name) => STALE_SESSION_PATTERN.test(name))

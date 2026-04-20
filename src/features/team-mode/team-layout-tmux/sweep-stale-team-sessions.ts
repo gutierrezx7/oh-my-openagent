@@ -15,7 +15,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 async function listTeamSessionsViaTmux(tmuxPath: string): Promise<string[]> {
-	const { runTmuxCommand } = await import("./tmux-runner")
+	const { runTmuxCommand } = await import("../../../shared/tmux")
 	const result = await runTmuxCommand(tmuxPath, ["list-sessions", "-F", "#{session_name}"])
 
 	if (!result.success) {
@@ -29,7 +29,7 @@ async function listTeamSessionsViaTmux(tmuxPath: string): Promise<string[]> {
 }
 
 async function killTeamSessionViaTmux(tmuxPath: string, sessionName: string): Promise<void> {
-	const { runTmuxCommand } = await import("./tmux-runner")
+	const { runTmuxCommand } = await import("../../../shared/tmux")
 	const result = await runTmuxCommand(tmuxPath, ["kill-session", "-t", sessionName])
 
 	if (!result.success) {

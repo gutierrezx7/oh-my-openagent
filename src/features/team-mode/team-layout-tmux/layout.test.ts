@@ -26,10 +26,12 @@ const runTmuxCommandMock = mock((_tmuxPath: string, args: Array<string>) => {
 const isServerRunningMock = mock(async (_serverUrl: string) => true)
 
 function registerMocks(): void {
-  mock.module("./tmux-runner", () => ({ runTmuxCommand: runTmuxCommandMock }))
-  mock.module("../../../tools/interactive-bash/tmux-path-resolver", () => ({ getTmuxPath: mock(() => Promise.resolve("tmux")) }))
-  mock.module("../../../shared", () => ({ log: mock(() => undefined) }))
-  mock.module("../../../shared/tmux", () => ({ isServerRunning: isServerRunningMock }))
+	mock.module("../../../tools/interactive-bash/tmux-path-resolver", () => ({ getTmuxPath: mock(() => Promise.resolve("tmux")) }))
+	mock.module("../../../shared", () => ({ log: mock(() => undefined) }))
+	mock.module("../../../shared/tmux", () => ({
+		isServerRunning: isServerRunningMock,
+		runTmuxCommand: runTmuxCommandMock,
+	}))
 }
 
 async function loadLayoutModule() {
