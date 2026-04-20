@@ -2,89 +2,71 @@
 
 import { beforeEach, describe, expect, it, mock } from "bun:test"
 
-import {
-  closeTeamMemberPaneWith,
-  type CloseTeamMemberPaneDeps,
-} from "./close-team-member-pane"
+const closeTeamMemberPaneSpecifier = import.meta.resolve("./close-team-member-pane")
+const sharedSpecifier = import.meta.resolve("../../../shared")
+const sharedTmuxSpecifier = import.meta.resolve("../../../shared/tmux")
+const tmuxPathResolverSpecifier = import.meta.resolve("../../../tools/interactive-bash/tmux-path-resolver")
 
-describe("closeTeamMemberPaneWith", () => {
-  let sendKeys: CloseTeamMemberPaneDeps["sendKeys"]
-  let killPane: CloseTeamMemberPaneDeps["killPane"]
-  let delay: CloseTeamMemberPaneDeps["delay"]
-  let log: CloseTeamMemberPaneDeps["log"]
-  let calls: Array<string>
+const closeTmuxPaneMock = mock(async (): Promise<boolean> => true)
+const getTmuxPathMock = mock(async (): Promise<string | undefined> => "sh")
+const logMock = mock(() => undefined)
 
-  beforeEach(() => {
-    calls = []
-    sendKeys = mock(async (paneId: string, keys: string): Promise<void> => {
-      calls.push(`sendKeys:${paneId}:${keys}`)
-    })
-    killPane = mock(async (paneId: string): Promise<{ success: boolean; stderr: string }> => {
-      calls.push(`killPane:${paneId}`)
-      return { success: true, stderr: "" }
-    })
-    delay = mock(async (milliseconds: number): Promise<void> => {
-      calls.push(`delay:${milliseconds}`)
-    })
-    log = mock((): void => undefined)
-  })
+async function loadCloseTeamMemberPane(): Promise<typeof import("./close-team-member-pane").closeTeamMemberPane> {
+	const module = await import(`${closeTeamMemberPaneSpecifier}?test=${crypto.randomUUID()}`)
+	return module.closeTeamMemberPane
+}
 
-  it("#given healthy pane #when close #then sends C-c, waits 250ms, then kill-pane, returns true", async () => {
-    // given
-    const deps: CloseTeamMemberPaneDeps = { sendKeys, killPane, delay, log }
+function registerModuleMocks(): void {
+	mock.module(sharedSpecifier, () => ({ log: logMock }))
+	mock.module(sharedTmuxSpecifier, () => ({ closeTmuxPane: closeTmuxPaneMock }))
+	mock.module(tmuxPathResolverSpecifier, () => ({ getTmuxPath: getTmuxPathMock }))
+}
 
-    // when
-    const result = await closeTeamMemberPaneWith("%42", deps)
+describe("closeTeamMemberPane", () => {
+	beforeEach(() => {
+		registerModuleMocks()
+		closeTmuxPaneMock.mockClear()
+		getTmuxPathMock.mockClear()
+		logMock.mockClear()
 
-    // then
-    expect(result).toBe(true)
-    expect(calls).toEqual(["sendKeys:%42:C-c", "delay:250", "killPane:%42"])
-  })
+		closeTmuxPaneMock.mockResolvedValue(true)
+		getTmuxPathMock.mockResolvedValue("sh")
+	})
 
-  it("#given pane already closed by C-c #when kill-pane errors with 'can't find pane' #then returns true", async () => {
-    // given
-    killPane = mock(async (paneId: string): Promise<{ success: boolean; stderr: string }> => {
-      calls.push(`killPane:${paneId}`)
-      return { success: false, stderr: "can't find pane: %42" }
-    })
+	it("#given team pane id #when closeTeamMemberPane called #then delegates to shared closeTmuxPane", async () => {
+		// given
+		const closeTeamMemberPane = await loadCloseTeamMemberPane()
 
-    const deps: CloseTeamMemberPaneDeps = { sendKeys, killPane, delay, log }
+		// when
+		const result = await closeTeamMemberPane("%42")
 
-    // when
-    const result = await closeTeamMemberPaneWith("%42", deps)
+		// then
+		expect(result).toBe(true)
+		expect(closeTmuxPaneMock).toHaveBeenCalledTimes(1)
+		expect(closeTmuxPaneMock).toHaveBeenCalledWith("%42")
+	})
 
-    // then
-    expect(result).toBe(true)
-  })
+	it("#given shared close returns false #when closeTeamMemberPane called #then returns false", async () => {
+		// given
+		const closeTeamMemberPane = await loadCloseTeamMemberPane()
+		closeTmuxPaneMock.mockResolvedValue(false)
 
-  it("#given kill-pane fails with other stderr #when close #then returns false and logs", async () => {
-    // given
-    killPane = mock(async (paneId: string): Promise<{ success: boolean; stderr: string }> => {
-      calls.push(`killPane:${paneId}`)
-      return { success: false, stderr: "permission denied" }
-    })
+		// when
+		const result = await closeTeamMemberPane("%42")
 
-    const deps: CloseTeamMemberPaneDeps = { sendKeys, killPane, delay, log }
+		// then
+		expect(result).toBe(false)
+	})
 
-    // when
-    const result = await closeTeamMemberPaneWith("%42", deps)
+	it("#given empty pane id #when closeTeamMemberPane called #then returns false without delegation", async () => {
+		// given
+		const closeTeamMemberPane = await loadCloseTeamMemberPane()
 
-    // then
-    expect(result).toBe(false)
-    expect(log).toHaveBeenCalledTimes(1)
-  })
+		// when
+		const result = await closeTeamMemberPane("")
 
-  it("#given empty paneId #when close #then returns false without calling tmux", async () => {
-    // given
-    const deps: CloseTeamMemberPaneDeps = { sendKeys, killPane, delay, log }
-
-    // when
-    const result = await closeTeamMemberPaneWith("", deps)
-
-    // then
-    expect(result).toBe(false)
-    expect(sendKeys).toHaveBeenCalledTimes(0)
-    expect(killPane).toHaveBeenCalledTimes(0)
-    expect(delay).toHaveBeenCalledTimes(0)
-  })
+		// then
+		expect(result).toBe(false)
+		expect(closeTmuxPaneMock).not.toHaveBeenCalled()
+	})
 })
