@@ -1,4 +1,5 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import { lookupTeamSession } from "../../features/team-mode/team-session-registry"
 import type { PluginContext } from "../../plugin/types"
 import type { ExecutorContext } from "../../tools/delegate-task/executor-types"
 
@@ -67,6 +68,22 @@ async function findRuntimeMember(
   sessionID: string,
   config: TeamModeConfig,
 ): Promise<{ memberName: string; teamRunId: string } | null> {
+  const registryEntry = lookupTeamSession(sessionID)
+  if (registryEntry?.role === "member") {
+    const runtimeState = await loadRuntimeState(registryEntry.teamRunId, config)
+    const runtimeMember = runtimeState.members.find(
+      (member) => member.name === registryEntry.memberName
+        && (member.sessionId === undefined || member.sessionId === sessionID),
+    )
+
+    if (runtimeMember !== undefined) {
+      return {
+        memberName: runtimeMember.name,
+        teamRunId: runtimeState.teamRunId,
+      }
+    }
+  }
+
   const activeTeams = await listActiveTeams(config)
 
   for (const activeTeam of activeTeams) {

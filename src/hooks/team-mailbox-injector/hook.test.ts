@@ -5,6 +5,10 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
+import {
+  clearTeamSessionRegistry,
+  registerTeamSession,
+} from "../../features/team-mode/team-session-registry"
 import { sendMessage } from "../../features/team-mode/team-mailbox/send"
 import type { RuntimeState } from "../../features/team-mode/types"
 import { saveRuntimeState } from "../../features/team-mode/team-state-store/store"
@@ -75,6 +79,7 @@ describe("createTeamMailboxInjector", () => {
   const temporaryDirectories: string[] = []
 
   afterEach(async () => {
+    clearTeamSessionRegistry()
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
   })
 
@@ -170,5 +175,98 @@ describe("createTeamMailboxInjector", () => {
     // then
     expect(firstOutput.messages).toHaveLength(2)
     expect(secondOutput.messages).toEqual(originalSecondMessages)
+  })
+
+  it("injects mailbox messages during the spawn race when the registry has the fresh member session but disk state is stale", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const hook = createHook(baseDir)
+    const teamRunId = randomUUID()
+    const staleRuntimeState: RuntimeState = {
+      ...createRuntimeState("stale-session", teamRunId),
+      members: [
+        {
+          name: "member-a",
+          agentType: "general-purpose",
+          status: "running",
+          lastInjectedTurnMarker: undefined,
+          pendingInjectedMessageIds: [],
+        },
+      ],
+    }
+    await seedRuntimeState(baseDir, staleRuntimeState)
+    await sendMessage({
+      version: 1,
+      messageId: randomUUID(),
+      from: "lead",
+      to: "member-a",
+      kind: "message",
+      body: "fresh registry hello",
+      timestamp: 1,
+    }, teamRunId, TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true }), { isLead: true, activeMembers: ["lead", "member-a"] })
+    registerTeamSession("session-member", {
+      teamRunId,
+      memberName: "member-a",
+      role: "member",
+    })
+    const output = createOutput("session-member")
+
+    // when
+    await hook["experimental.chat.messages.transform"]?.(
+      { sessionID: "session-member" },
+      output,
+    )
+
+    // then
+    expect(output.messages).toHaveLength(2)
+    expect(output.messages[0]?.parts[0]?.text).toContain("fresh registry hello")
+  })
+
+  it("falls back to disk lookup when the registry points the session at the wrong teamRunId", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const hook = createHook(baseDir)
+    const correctTeamRunId = randomUUID()
+    const wrongTeamRunId = randomUUID()
+    await seedRuntimeState(baseDir, createRuntimeState("session-member", correctTeamRunId))
+    await seedRuntimeState(baseDir, createRuntimeState("other-session", wrongTeamRunId))
+    await sendMessage({
+      version: 1,
+      messageId: randomUUID(),
+      from: "lead",
+      to: "member-a",
+      kind: "message",
+      body: "message for the correct team",
+      timestamp: 1,
+    }, correctTeamRunId, TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true }), { isLead: true, activeMembers: ["lead", "member-a"] })
+    await sendMessage({
+      version: 1,
+      messageId: randomUUID(),
+      from: "lead",
+      to: "member-a",
+      kind: "message",
+      body: "message for the wrong team",
+      timestamp: 2,
+    }, wrongTeamRunId, TeamModeConfigSchema.parse({ base_dir: baseDir, enabled: true }), { isLead: true, activeMembers: ["lead", "member-a"] })
+    registerTeamSession("session-member", {
+      teamRunId: wrongTeamRunId,
+      memberName: "member-a",
+      role: "member",
+    })
+    const output = createOutput("session-member")
+
+    // when
+    await hook["experimental.chat.messages.transform"]?.(
+      { sessionID: "session-member" },
+      output,
+    )
+
+    // then
+    expect(output.messages).toHaveLength(2)
+    const injectedText = output.messages[0]?.parts[0]?.text ?? ""
+    expect(injectedText).toContain("message for the correct team")
+    expect(injectedText).not.toContain("message for the wrong team")
   })
 })
