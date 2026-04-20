@@ -61,7 +61,12 @@ function createHook(baseDir: string) {
   )
 }
 
-function createOutput(sessionID: string) {
+function createOutput(sessionID: string): {
+  messages: Array<{
+    info: { role: string; sessionID: string }
+    parts: Array<{ type: string; text?: string; synthetic?: boolean }>
+  }>
+} {
   return {
     messages: [
       {
