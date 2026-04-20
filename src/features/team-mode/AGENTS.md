@@ -16,6 +16,7 @@ team-mode/
 ├── types.ts                    # Zod schemas: TeamSpec, Member, Message, Task, RuntimeState
 ├── member-parser.ts            # member validation with eligibility registry
 ├── deps.ts                     # dependency injection types
+├── team-session-registry.ts    # in-memory sessionId -> team/member map for spawn-race-safe lookups
 ├── team-registry/              # team spec loading from ~/.omo/teams/
 │   ├── index.ts
 │   ├── loader.ts               # load from user + project scopes
@@ -54,12 +55,14 @@ team-mode/
 ├── team-layout-tmux/           # optional tmux visualization
 │   ├── index.ts
 │   ├── layout.ts               # pane layout management
-│   └── tmux-runner.ts          # tmux command execution
+│   ├── close-team-member-pane.ts # close member pane + rebalance window
+│   ├── rebalance-team-window.ts  # redistribute layout after pane changes
+│   └── sweep-stale-team-sessions.ts # garbage-collect orphaned team tmux sessions
 └── tools/                      # 12 team_* tools
     ├── index.ts                # tool registration
     ├── lifecycle.ts            # create, delete, shutdown
     ├── messaging.ts            # send_message
-    └── tasks.ts                # task_create, list, update, get
+    ├── tasks.ts                # task_create, list, update, get
     └── query.ts                # status, list
 ```
 
@@ -74,6 +77,7 @@ See user guide: `docs/guide/team-mode.md`
 3. **Atomic writes**: All state changes write to temp file then rename.
 4. **Eligible agents only**: sisyphus, atlas, sisyphus-junior, hephaestus allowed. Read-only agents rejected at parse.
 5. **No nested teams**: Members cannot call `team_create`.
+6. **Spawn-race-safe session resolution**: Every team session spawn MUST call `registerTeamSession(sessionId, entry)` synchronously when the sessionID becomes known; every hook that resolves a sessionID to a team/member MUST call `lookupTeamSession` before falling back to `loadRuntimeState` to avoid the spawn-race window.
 
 ## WHERE TO LOOK
 
