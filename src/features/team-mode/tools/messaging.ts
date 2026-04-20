@@ -78,10 +78,21 @@ async function deliverLive(
     const reservation = await reserveMessageForDelivery(teamRunId, recipientName, message.messageId, config)
     if (reservation === null) continue
 
+    const recipientAgent = recipientMember?.subagent_type
+    const recipientModel = recipientMember?.model
+      ? { providerID: recipientMember.model.providerID, modelID: recipientMember.model.modelID }
+      : undefined
+    const recipientVariant = recipientMember?.model?.variant
+
     try {
       await client.session.promptAsync({
         path: { id: recipientSessionId },
-        body: { parts: [{ type: "text", text: envelope }] },
+        body: {
+          ...(recipientAgent ? { agent: recipientAgent } : {}),
+          ...(recipientModel ? { model: recipientModel } : {}),
+          ...(recipientVariant ? { variant: recipientVariant } : {}),
+          parts: [{ type: "text", text: envelope }],
+        },
       })
       await commitDeliveryReservation(reservation)
     } catch (error) {
