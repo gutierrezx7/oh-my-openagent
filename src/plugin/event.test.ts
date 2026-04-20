@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, mock, spyOn } from "bun:test"
 import { createEventHandler } from "./event"
 import { createChatMessageHandler } from "./chat-message"
 import * as openclawRuntimeDispatch from "../openclaw/runtime-dispatch"
-import { _resetForTesting, setMainSession } from "../features/claude-code-session-state"
+import { _resetForTesting, setMainSession, subagentSessions } from "../features/claude-code-session-state"
 import { clearPendingModelFallback, createModelFallbackHook } from "../hooks/model-fallback/hook"
 import { getSessionPromptParams, setSessionPromptParams } from "../shared/session-prompt-params-state"
 
@@ -525,9 +525,64 @@ describe("createEventHandler - event forwarding", () => {
 		expect(createdSessions).toHaveLength(0)
 	})
 
-	it("skips tmux session.created dispatch for subagent sessions but keeps primary sessions", async () => {
+	it("skips tmux dispatch for subagent sessions marked only via subagentSessions (no parentID)", async () => {
 		//#given
 		type SessionCreatedEvent = {
+			type?: string
+			properties?: {
+				info?: {
+					id?: string
+					parentID?: string
+					title?: string
+				}
+			}
+		}
+		const onSessionCreated = mock(async (event: SessionCreatedEvent) => event)
+		subagentSessions.add("ses_marked_subagent")
+		const eventHandler = createEventHandler({
+			ctx: asEventHandlerContext({}),
+			pluginConfig: asPluginConfig({
+				tmux: {
+					enabled: true,
+					layout: "main-vertical",
+					main_pane_size: 60,
+					main_pane_min_width: 120,
+					agent_pane_min_width: 40,
+					isolation: "inline",
+				},
+			}),
+			firstMessageVariantGate: {
+				markSessionCreated: () => {},
+				clear: () => {},
+			},
+			managers: createEventHandlerManagers({
+				skillMcpManager: {
+					disconnectSession: async () => {},
+				},
+				tmuxSessionManager: {
+					onSessionCreated,
+					onSessionDeleted: async () => {},
+				},
+			}),
+			hooks: createEventHandlerHooks({}),
+		})
+
+		//#when
+		await eventHandler(asEventHandlerInput({
+			event: {
+				type: "session.created",
+				properties: { info: { id: "ses_marked_subagent", title: "Child" } },
+			},
+		}))
+
+		//#then
+		expect(onSessionCreated).not.toHaveBeenCalled()
+	})
+
+	it("still dispatches for a primary session not in subagentSessions", async () => {
+		//#given
+		type SessionCreatedEvent = {
+			type?: string
 			properties?: {
 				info?: {
 					id?: string
@@ -569,12 +624,6 @@ describe("createEventHandler - event forwarding", () => {
 		await eventHandler(asEventHandlerInput({
 			event: {
 				type: "session.created",
-				properties: { info: { id: "ses_subagent", parentID: "ses_parent", title: "Child" } },
-			},
-		}))
-		await eventHandler(asEventHandlerInput({
-			event: {
-				type: "session.created",
 				properties: { info: { id: "ses_primary", title: "Primary" } },
 			},
 		}))
@@ -585,6 +634,59 @@ describe("createEventHandler - event forwarding", () => {
 			type: "session.created",
 			properties: { info: { id: "ses_primary", title: "Primary" } },
 		})
+	})
+
+	it("still skips when parentID present and subagentSessions is empty", async () => {
+		//#given
+		type SessionCreatedEvent = {
+			type?: string
+			properties?: {
+				info?: {
+					id?: string
+					parentID?: string
+					title?: string
+				}
+			}
+		}
+		const onSessionCreated = mock(async (event: SessionCreatedEvent) => event)
+		const eventHandler = createEventHandler({
+			ctx: asEventHandlerContext({}),
+			pluginConfig: asPluginConfig({
+				tmux: {
+					enabled: true,
+					layout: "main-vertical",
+					main_pane_size: 60,
+					main_pane_min_width: 120,
+					agent_pane_min_width: 40,
+					isolation: "inline",
+				},
+			}),
+			firstMessageVariantGate: {
+				markSessionCreated: () => {},
+				clear: () => {},
+			},
+			managers: createEventHandlerManagers({
+				skillMcpManager: {
+					disconnectSession: async () => {},
+				},
+				tmuxSessionManager: {
+					onSessionCreated,
+					onSessionDeleted: async () => {},
+				},
+			}),
+			hooks: createEventHandlerHooks({}),
+		})
+
+		//#when
+		await eventHandler(asEventHandlerInput({
+			event: {
+				type: "session.created",
+				properties: { info: { id: "ses_parent_marked", parentID: "ses_parent", title: "Child" } },
+			},
+		}))
+
+		//#then
+		expect(onSessionCreated).not.toHaveBeenCalled()
 	})
 
 	it("dispatches OpenClaw after session.created for main sessions (no parentID)", async () => {

@@ -430,7 +430,7 @@ export function createEventHandler(args: {
 
     if (event.type === "session.created") {
       const sessionInfo = props?.info as { id?: string; title?: string; parentID?: string } | undefined;
-      const isSubagentSession = !!sessionInfo?.parentID;
+      const isSubagentSession = !!sessionInfo?.parentID || !!sessionInfo?.id && subagentSessions.has(sessionInfo.id);
 
       if (!isSubagentSession) {
         setMainSession(sessionInfo?.id);
