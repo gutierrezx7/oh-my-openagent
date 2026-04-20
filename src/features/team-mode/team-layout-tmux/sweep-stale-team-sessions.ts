@@ -3,15 +3,7 @@ export const TEAM_SESSION_PATTERN = /^omo-team-(.+)$/
 export type TeamSweepDeps = {
 	listCandidates: () => Promise<string[]>
 	killSession: (name: string) => Promise<void>
-	log: (message: string, meta?: Record<string, unknown>) => void
-}
-
-function getErrorMessage(error: unknown): string {
-	if (error instanceof Error) {
-		return error.message
-	}
-
-	return String(error)
+	log: (message: string, payload?: unknown) => void
 }
 
 async function listTeamSessionsViaTmux(tmuxPath: string): Promise<string[]> {
@@ -41,44 +33,26 @@ export async function sweepStaleTeamSessionsWith(
 	activeTeamRunIds: ReadonlySet<string>,
 	deps: TeamSweepDeps,
 ): Promise<string[]> {
-	let candidateSessions: string[]
+	const { sweepTmuxSessionsWith } = await import("../../../shared/tmux")
 
-	try {
-		candidateSessions = await deps.listCandidates()
-	} catch (error) {
-		deps.log("[sweepStaleTeamSessionsWith] failed to list candidate sessions", {
-			error: getErrorMessage(error),
-		})
-		return []
-	}
-
-	const killedSessionNames: string[] = []
-
-	for (const sessionName of candidateSessions) {
-		// Only the dedicated omo-team-* session namespace maps back to team run ids.
-		const teamRunId = sessionName.match(TEAM_SESSION_PATTERN)?.[1]
-
-		if (!teamRunId) {
-			continue
-		}
-
-		if (activeTeamRunIds.has(teamRunId)) {
-			continue
-		}
-
-		try {
-			await deps.killSession(sessionName)
-			killedSessionNames.push(sessionName)
-		} catch (error) {
-			deps.log("[sweepStaleTeamSessionsWith] failed to kill stale team session", {
-				error: getErrorMessage(error),
-				sessionName,
-				teamRunId,
-			})
-		}
-	}
-
-	return killedSessionNames
+	return sweepTmuxSessionsWith(
+		{
+			isInsideTmux: () => true,
+			getTmuxPath: async () => "tmux",
+			listCandidateSessions: async () => deps.listCandidates(),
+			killSession: async (sessionName) => {
+				await deps.killSession(sessionName)
+				return true
+			},
+			log: deps.log,
+		},
+		{
+			predicate: (sessionName) => {
+				const teamRunId = sessionName.match(TEAM_SESSION_PATTERN)?.[1]
+				return teamRunId !== undefined && teamRunId.length > 0 && !activeTeamRunIds.has(teamRunId)
+			},
+		},
+	)
 }
 
 export async function sweepStaleTeamSessions(activeTeamRunIds: ReadonlySet<string>): Promise<string[]> {

@@ -9,7 +9,7 @@ import {
 
 type LoggedMessage = {
 	message: string
-	meta?: Record<string, unknown>
+	meta?: unknown
 }
 
 type SweepFixture = {
