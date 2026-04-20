@@ -266,6 +266,44 @@ describe("createTeamRun", () => {
     ])
   })
 
+  test("persists the reused caller lead's subagent_type so live deliveries can pin it", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-caller-lead-pin-"))
+    temporaryDirectories.push(baseDir)
+    const { manager } = createManager(baseDir, async (input) => ({
+      id: `task-${input.agent}`,
+      sessionID: `${input.agent}-session`,
+      status: "running",
+    } as BackgroundTask))
+    const spec: TeamSpec = {
+      version: 1,
+      name: "alpha-team",
+      createdAt: Date.now(),
+      leadAgentId: "lead",
+      members: [
+        { kind: "subagent_type", name: "lead", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
+        { kind: "category", name: "worker", category: "quick", prompt: "work hard", backendType: "in-process", isActive: true },
+      ],
+    }
+
+    // when
+    const runtimeState = await createTeamRun(
+      spec,
+      "ses_caller_sisyphus",
+      createContext(baseDir, manager),
+      createConfig(baseDir),
+      manager,
+      undefined,
+      { callerAgentTypeId: "sisyphus" },
+    )
+
+    // then
+    const leadMember = runtimeState.members.find((member) => member.name === "lead")
+    expect(leadMember?.sessionId).toBe("ses_caller_sisyphus")
+    expect(leadMember?.subagent_type).toBe("sisyphus")
+    expect(leadMember?.model).toBeUndefined()
+  })
+
   test("still spawns the explicit lead when the caller agent does not match it", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-explicit-lead-"))

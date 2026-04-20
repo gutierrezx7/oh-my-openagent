@@ -115,10 +115,16 @@ export async function createTeamRun(
   const reusesCallerLeadSession = shouldReuseCallerLeadSession(spec, options?.callerAgentTypeId)
   let runtimeState = await createRuntimeState(spec, leadSessionId, await resolveSpecSource(spec, ctx, config), config)
   if (reusesCallerLeadSession) {
+    const callerLeadSubagentType = options?.callerAgentTypeId
     runtimeState = await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({
       ...currentState,
       members: currentState.members.map((member) => member.name === spec.leadAgentId
-        ? { ...member, sessionId: leadSessionId, status: "running" }
+        ? {
+            ...member,
+            sessionId: leadSessionId,
+            status: "running",
+            ...(callerLeadSubagentType ? { subagent_type: callerLeadSubagentType } : {}),
+          }
         : member),
     }), config)
   }
