@@ -68,6 +68,8 @@ describe("TmuxPollingManager overlap", () => {
       closePending: false,
       closeRetryCount: 0,
       activityVersion: 0,
+      stableIdlePolls: 2,
+      observedIdleActivityVersion: 0,
     })
 
     let messagesCallCount = 0
@@ -97,7 +99,6 @@ describe("TmuxPollingManager overlap", () => {
 
     //#when
     const pollSessions = (manager as unknown as { pollSessions: () => Promise<void> }).pollSessions
-    await pollSessions.call(manager)
     await pollSessions.call(manager)
     await pollSessions.call(manager)
     await pollSessions.call(manager)
@@ -179,6 +180,57 @@ describe("TmuxPollingManager overlap", () => {
 
     // when
     const pollSessions = (manager as unknown as { pollSessions: () => Promise<void> }).pollSessions
+    await pollSessions.call(manager)
+
+    // then
+    expect(closedSessionIds).toEqual([])
+  })
+
+  test("does not close when activityVersion changes before the idle recheck resolves", async () => {
+    // given
+    const sessions = new Map<string, TrackedSession>()
+    sessions.set("ses-1", {
+      sessionId: "ses-1",
+      paneId: "%1",
+      description: "test",
+      createdAt: new Date(Date.now() - 15_000),
+      lastSeenAt: new Date(),
+      closePending: false,
+      closeRetryCount: 0,
+      activityVersion: 0,
+    })
+
+    const closedSessionIds: string[] = []
+    let statusCallCount = 0
+    let manager: TmuxPollingManager
+
+    const client = {
+      session: {
+        status: async () => {
+          statusCallCount += 1
+          if (statusCallCount === 2) {
+            manager.handleEvent({
+              type: "message.part.delta",
+              properties: { sessionID: "ses-1", field: "text", delta: "new activity" },
+            })
+          }
+
+          return { data: { "ses-1": { type: "idle" } } }
+        },
+        messages: async () => ({ data: [] }),
+      },
+    }
+
+    manager = new TmuxPollingManager(
+      client as unknown as import("../../tools/delegate-task/types").OpencodeClient,
+      sessions,
+      async (sessionId) => {
+        closedSessionIds.push(sessionId)
+      },
+    )
+    const pollSessions = (manager as unknown as { pollSessions: () => Promise<void> }).pollSessions
+
+    // when
     await pollSessions.call(manager)
 
     // then

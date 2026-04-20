@@ -88,30 +88,42 @@ export class TmuxPollingManager {
         if (isIdle && elapsedMs >= MIN_STABILITY_TIME_MS) {
           const activityVersion = tracked.activityVersion ?? 0
 
-          if (tracked.observedIdleActivityVersion === activityVersion) {
-            tracked.stableIdlePolls = (tracked.stableIdlePolls ?? 0) + 1
-
-            if (tracked.stableIdlePolls >= STABLE_POLLS_REQUIRED) {
-              const recheckResult = await this.client.session.status({ path: undefined })
-              const recheckStatuses = normalizeSDKResponse(recheckResult, {} as Record<string, { type: string }>)
-              const recheckStatus = recheckStatuses[sessionId]
-
-              if (recheckStatus?.type === "idle") {
-                shouldCloseViaStability = true
-              } else {
-                tracked.stableIdlePolls = 0
-                log("[tmux-session-manager] stability reached but session not idle on recheck, resetting", {
-                  sessionId,
-                  recheckStatus: recheckStatus?.type,
-                })
-              }
-            }
-          } else {
-            tracked.stableIdlePolls = 0
+          if (tracked.observedIdleActivityVersion !== activityVersion) {
+            tracked.stableIdlePolls = 1
             tracked.observedIdleActivityVersion = activityVersion
+          } else {
+            tracked.stableIdlePolls = (tracked.stableIdlePolls ?? 0) + 1
+          }
+
+          if ((tracked.stableIdlePolls ?? 0) >= STABLE_POLLS_REQUIRED) {
+            const stableWindowActivityVersion = tracked.observedIdleActivityVersion ?? activityVersion
+            const recheckResult = await this.client.session.status({ path: undefined })
+            const recheckStatuses = normalizeSDKResponse(recheckResult, {} as Record<string, { type: string }>)
+            const recheckStatus = recheckStatuses[sessionId]
+            const latestTracked = this.sessions.get(sessionId) ?? tracked
+            const recheckActivityVersion = latestTracked.activityVersion ?? 0
+
+            if (recheckActivityVersion !== stableWindowActivityVersion) {
+              latestTracked.stableIdlePolls = 0
+              latestTracked.observedIdleActivityVersion = recheckActivityVersion
+              log("[tmux-session-manager] stability recheck aborted after new activity", {
+                sessionId,
+                stableWindowActivityVersion,
+                recheckActivityVersion,
+              })
+            } else if (recheckStatus?.type === "idle") {
+              shouldCloseViaStability = true
+            } else {
+              latestTracked.stableIdlePolls = 0
+              log("[tmux-session-manager] stability reached but session not idle on recheck, resetting", {
+                sessionId,
+                recheckStatus: recheckStatus?.type,
+              })
+            }
           }
         } else if (!isIdle) {
           tracked.stableIdlePolls = 0
+          tracked.observedIdleActivityVersion = undefined
         }
 
         log("[tmux-session-manager] session check", {
