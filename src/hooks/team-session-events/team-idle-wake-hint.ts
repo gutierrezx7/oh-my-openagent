@@ -6,7 +6,12 @@ import { log } from "../../shared/logger"
 
 type PromptAsyncInput = {
   path: { id: string }
-  body: { parts: Array<{ type: "text"; text: string }> }
+  body: {
+    parts: Array<{ type: "text"; text: string }>
+    agent?: string
+    model?: { providerID: string; modelID: string }
+    variant?: string
+  }
   query: { directory: string }
 }
 
@@ -83,9 +88,18 @@ export function createTeamIdleWakeHint(ctx: TeamIdleWakeHintContext, config: Tea
             return
           }
 
+          const memberAgent = memberEntry.subagent_type
+          const memberModel = memberEntry.model
+            ? { providerID: memberEntry.model.providerID, modelID: memberEntry.model.modelID }
+            : undefined
+          const memberVariant = memberEntry.model?.variant
+
           await ctx.client.session.promptAsync({
             path: { id: sessionID },
             body: {
+              ...(memberAgent ? { agent: memberAgent } : {}),
+              ...(memberModel ? { model: memberModel } : {}),
+              ...(memberVariant ? { variant: memberVariant } : {}),
               parts: [{ type: "text", text: buildWakeHint(unreadMessages.length) }],
             },
             query: { directory: ctx.directory },
