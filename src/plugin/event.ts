@@ -430,14 +430,16 @@ export function createEventHandler(args: {
 
     if (event.type === "session.created") {
       const sessionInfo = props?.info as { id?: string; title?: string; parentID?: string } | undefined;
+      const isSubagentSession = !!sessionInfo?.parentID;
 
-      if (!sessionInfo?.parentID) {
+      if (!isSubagentSession) {
         setMainSession(sessionInfo?.id);
       }
 
       firstMessageVariantGate.markSessionCreated(sessionInfo);
 
-      if (tmuxIntegrationEnabled) {
+      // Subagent sessions are registered by the specialized background/delegate callbacks.
+      if (tmuxIntegrationEnabled && !isSubagentSession) {
         await managers.tmuxSessionManager.onSessionCreated(
           event as {
             type: string;
@@ -450,7 +452,6 @@ export function createEventHandler(args: {
 
       // Skip subagent sessions — they are dispatched by specialized callbacks
       // in create-managers.ts (async) and tool-registry.ts (sync)
-      const isSubagentSession = !!sessionInfo?.parentID;
       if (pluginConfig.openclaw && sessionInfo?.id && !isSubagentSession) {
         await dispatchOpenClawEvent({
           config: pluginConfig.openclaw,

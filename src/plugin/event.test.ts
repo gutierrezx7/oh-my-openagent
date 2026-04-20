@@ -525,6 +525,68 @@ describe("createEventHandler - event forwarding", () => {
 		expect(createdSessions).toHaveLength(0)
 	})
 
+	it("skips tmux session.created dispatch for subagent sessions but keeps primary sessions", async () => {
+		//#given
+		type SessionCreatedEvent = {
+			properties?: {
+				info?: {
+					id?: string
+					parentID?: string
+					title?: string
+				}
+			}
+		}
+		const onSessionCreated = mock(async (event: SessionCreatedEvent) => event)
+		const eventHandler = createEventHandler({
+			ctx: asEventHandlerContext({}),
+			pluginConfig: asPluginConfig({
+				tmux: {
+					enabled: true,
+					layout: "main-vertical",
+					main_pane_size: 60,
+					main_pane_min_width: 120,
+					agent_pane_min_width: 40,
+					isolation: "inline",
+				},
+			}),
+			firstMessageVariantGate: {
+				markSessionCreated: () => {},
+				clear: () => {},
+			},
+			managers: createEventHandlerManagers({
+				skillMcpManager: {
+					disconnectSession: async () => {},
+				},
+				tmuxSessionManager: {
+					onSessionCreated,
+					onSessionDeleted: async () => {},
+				},
+			}),
+			hooks: createEventHandlerHooks({}),
+		})
+
+		//#when
+		await eventHandler(asEventHandlerInput({
+			event: {
+				type: "session.created",
+				properties: { info: { id: "ses_subagent", parentID: "ses_parent", title: "Child" } },
+			},
+		}))
+		await eventHandler(asEventHandlerInput({
+			event: {
+				type: "session.created",
+				properties: { info: { id: "ses_primary", title: "Primary" } },
+			},
+		}))
+
+		//#then
+		expect(onSessionCreated).toHaveBeenCalledTimes(1)
+		expect(onSessionCreated).toHaveBeenCalledWith({
+			type: "session.created",
+			properties: { info: { id: "ses_primary", title: "Primary" } },
+		})
+	})
+
 	it("dispatches OpenClaw after session.created for main sessions (no parentID)", async () => {
 		//#given
 		const openClawSpy = spyOn(openclawRuntimeDispatch, "dispatchOpenClawEvent").mockResolvedValue(null)
