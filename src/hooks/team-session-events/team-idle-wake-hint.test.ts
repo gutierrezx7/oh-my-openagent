@@ -10,6 +10,10 @@ import { TeamModeConfigSchema } from "../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import * as ackModule from "../../features/team-mode/team-mailbox/ack"
 import { sendMessage } from "../../features/team-mode/team-mailbox/send"
+import {
+  clearTeamSessionRegistry,
+  registerTeamSession,
+} from "../../features/team-mode/team-session-registry"
 import { getInboxDir, resolveBaseDir } from "../../features/team-mode/team-registry/paths"
 import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
@@ -91,6 +95,7 @@ async function seedUnreadMessage(
 }
 
 afterEach(async () => {
+  clearTeamSessionRegistry()
   await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
     await rm(directoryPath, { recursive: true, force: true })
   }))
@@ -260,5 +265,118 @@ describe("createTeamIdleWakeHint", () => {
 
     const processedEntries = await readdir(path.join(getInboxDir(resolveBaseDir(config), teamRunId, "worker"), "processed"))
     expect(processedEntries.sort()).toEqual(messageIds.map((messageId) => `${messageId}.json`).sort())
+  })
+
+  test("sends a wake hint during the spawn race when the registry tracks the fresh member session before disk state persists it", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const staleRuntimeState: RuntimeState = {
+      ...createRuntimeState(teamRunId),
+      members: [
+        {
+          name: "worker",
+          agentType: "general-purpose",
+          status: "idle",
+          pendingInjectedMessageIds: [],
+        },
+      ],
+    }
+    await seedRuntimeState(staleRuntimeState, config)
+    await seedUnreadMessage(teamRunId, config, randomUUID(), "fresh registry wake hint", 100)
+    registerTeamSession("member-session", {
+      teamRunId,
+      memberName: "worker",
+      role: "member",
+    })
+
+    const promptInputs: Array<WakeHintPromptInput> = []
+    const promptAsyncSpy = mock(async (input: WakeHintPromptInput) => {
+      promptInputs.push(input)
+      return {}
+    })
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: { session: { promptAsync: promptAsyncSpy } },
+    }, config)
+
+    // when
+    await handler({
+      event: {
+        type: "session.idle",
+        properties: { sessionID: "member-session" },
+      },
+    })
+
+    // then
+    expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
+    const promptInput = promptInputs[0]
+    if (promptInput === undefined) {
+      throw new Error("expected wake hint prompt input")
+    }
+    expect(promptInput.body.parts[0]?.text).toContain("1 new team messages")
+  })
+
+  test("falls back to disk lookup when the registry points the member session at the wrong teamRunId", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const correctTeamRunId = randomUUID()
+    const wrongTeamRunId = randomUUID()
+    const correctRuntimeState = createRuntimeState(correctTeamRunId)
+    const correctWorker = correctRuntimeState.members[0]
+    if (correctWorker === undefined) {
+      throw new Error("worker member missing from correct fixture")
+    }
+    correctWorker.subagent_type = "atlas"
+    await seedRuntimeState(correctRuntimeState, config)
+    await seedRuntimeState({
+      ...createRuntimeState(wrongTeamRunId),
+      members: [
+        {
+          name: "worker",
+          sessionId: "other-session",
+          agentType: "general-purpose",
+          status: "idle",
+          pendingInjectedMessageIds: [],
+        },
+      ],
+    }, config)
+    await seedUnreadMessage(correctTeamRunId, config, randomUUID(), "first correct message", 100)
+    await seedUnreadMessage(correctTeamRunId, config, randomUUID(), "second correct message", 200)
+    await seedUnreadMessage(wrongTeamRunId, config, randomUUID(), "wrong team message", 300)
+    registerTeamSession("member-session", {
+      teamRunId: wrongTeamRunId,
+      memberName: "worker",
+      role: "member",
+    })
+
+    const promptInputs: Array<WakeHintPromptInput> = []
+    const promptAsyncSpy = mock(async (input: WakeHintPromptInput) => {
+      promptInputs.push(input)
+      return {}
+    })
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: { session: { promptAsync: promptAsyncSpy } },
+    }, config)
+
+    // when
+    await handler({
+      event: {
+        type: "session.idle",
+        properties: { sessionID: "member-session" },
+      },
+    })
+
+    // then
+    expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
+    const promptInput = promptInputs[0]
+    if (promptInput === undefined) {
+      throw new Error("expected wake hint prompt input")
+    }
+    expect(promptInput.body.parts[0]?.text).toContain("2 new team messages")
+    expect(promptInput.body.agent).toBe("atlas")
   })
 })
