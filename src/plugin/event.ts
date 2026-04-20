@@ -286,6 +286,7 @@ export function createEventHandler(args: {
 
   const recentSyntheticIdles = new Map<string, number>();
   const recentRealIdles = new Map<string, number>();
+  const recentAnyIdles = new Map<string, number>();
   const DEDUP_WINDOW_MS = 500;
   const teamModeConfig = pluginConfig.team_mode?.enabled ? pluginConfig.team_mode : undefined;
   const teamLeadOrphanHandler = teamModeConfig
@@ -322,6 +323,16 @@ export function createEventHandler(args: {
     // Headless runs (or resumed sessions) may not emit session.created, so mainSessionID can be unset.
     // In that case, treat any non-subagent session as the "main" interactive session.
     return !subagentSessions.has(sessionID);
+  };
+
+  const shouldDispatchIdleEvent = (sessionID: string, now: number): boolean => {
+    const lastDispatchedAt = recentAnyIdles.get(sessionID);
+    if (lastDispatchedAt !== undefined && now - lastDispatchedAt < DEDUP_WINDOW_MS) {
+      return false;
+    }
+
+    recentAnyIdles.set(sessionID, now);
+    return true;
   };
 
   const autoContinueAfterFallback = async (
@@ -379,20 +390,23 @@ export function createEventHandler(args: {
     pruneRecentSyntheticIdles({
       recentSyntheticIdles,
       recentRealIdles,
+      recentAnyIdles,
       now: Date.now(),
       dedupWindowMs: DEDUP_WINDOW_MS,
     });
 
     if (input.event.type === "session.idle") {
-      const sessionID = (input.event.properties as Record<string, unknown> | undefined)?.sessionID as
-        | string
-        | undefined;
+      const sessionID = getEventSessionID(input);
       if (sessionID) {
+        const now = Date.now();
         const emittedAt = recentSyntheticIdles.get(sessionID);
-        if (emittedAt && Date.now() - emittedAt < DEDUP_WINDOW_MS) {
+        if (emittedAt !== undefined && now - emittedAt < DEDUP_WINDOW_MS) {
           recentSyntheticIdles.delete(sessionID);
         }
-        recentRealIdles.set(sessionID, Date.now());
+        recentRealIdles.set(sessionID, now);
+        if (!shouldDispatchIdleEvent(sessionID, now)) {
+          return;
+        }
       }
     }
 
@@ -401,12 +415,16 @@ export function createEventHandler(args: {
     const syntheticIdle = normalizeSessionStatusToIdle(input);
     if (syntheticIdle) {
       const sessionID = (syntheticIdle.event.properties as Record<string, unknown>)?.sessionID as string;
+      const now = Date.now();
       const emittedAt = recentRealIdles.get(sessionID);
-      if (emittedAt && Date.now() - emittedAt < DEDUP_WINDOW_MS) {
+      if (emittedAt !== undefined && now - emittedAt < DEDUP_WINDOW_MS) {
         recentRealIdles.delete(sessionID);
         return;
       }
-      recentSyntheticIdles.set(sessionID, Date.now());
+      recentSyntheticIdles.set(sessionID, now);
+      if (!shouldDispatchIdleEvent(sessionID, now)) {
+        return;
+      }
       await dispatchToHooks(syntheticIdle as EventInput);
       if (pluginConfig.openclaw) {
         await dispatchOpenClawEvent({

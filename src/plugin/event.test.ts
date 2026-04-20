@@ -95,6 +95,37 @@ function createIdleTrackingEventHandler(dispatchCalls: EventInput[]): ReturnType
 	})
 }
 
+function createIdleDedupSpyEventHandler(args: {
+	onEvent: (event: EventInput["event"]) => void
+	sessionNotification: (input: EventInput) => Promise<void>
+}): ReturnType<typeof createEventHandler> {
+	return createEventHandler({
+		ctx: asEventHandlerContext({
+			directory: "/tmp",
+			client: {
+				session: {},
+			},
+		}),
+		pluginConfig: asPluginConfig({
+			tmux: { enabled: true },
+		}),
+		firstMessageVariantGate: {
+			markSessionCreated: () => {},
+			clear: () => {},
+		},
+		managers: createEventHandlerManagers({
+			tmuxSessionManager: {
+				onEvent: args.onEvent,
+				onSessionCreated: async () => {},
+				onSessionDeleted: async () => {},
+			},
+		}),
+		hooks: createEventHandlerHooks({
+			sessionNotification: args.sessionNotification,
+		}),
+	})
+}
+
 async function flushMicrotasks(turns: number = 5): Promise<void> {
 	for (let index = 0; index < turns; index += 1) {
 		await Promise.resolve()
@@ -291,7 +322,7 @@ afterEach(() => {
 		expect(spawnTmuxPane).toHaveBeenCalledTimes(1)
 	})
 
-	it("#given synthetic idle fires first #when real idle arrives within 500ms #then real idle dispatched", async () => {
+	it("dedups real-idle-after-synthetic-idle within 500ms", async () => {
 		//#given
 		const dispatchCalls: EventInput[] = []
 		const eventHandler = createIdleTrackingEventHandler(dispatchCalls)
@@ -317,14 +348,67 @@ afterEach(() => {
 		}))
 
 		//#then
-		expect(dispatchCalls).toHaveLength(2)
+		expect(dispatchCalls).toHaveLength(1)
 		expect(dispatchCalls[0]?.event.type).toBe("session.idle")
-		expect(dispatchCalls[1]?.event.type).toBe("session.idle")
 		expect((dispatchCalls[0]?.event.properties as { sessionID?: string } | undefined)?.sessionID).toBe(sessionId)
-		expect((dispatchCalls[1]?.event.properties as { sessionID?: string } | undefined)?.sessionID).toBe(sessionId)
 	})
 
-	it("#given real idle fires first #when synthetic arrives within 500ms #then synthetic dropped", async () => {
+	it("dedups back-to-back real session.idle events for the same sessionID within 500ms", async () => {
+		//#given
+		const originalDateNow = Date.now
+		let currentNow = 10_000
+		Date.now = () => currentNow
+		const onEvent = mock<(event: EventInput["event"]) => void>(() => {})
+		const sessionNotification = mock(async (_input: EventInput) => {})
+		const eventHandler = createIdleDedupSpyEventHandler({
+			onEvent,
+			sessionNotification,
+		})
+		const sessionId = "ses_same_idle"
+
+		try {
+			//#when
+			await eventHandler(asEventHandlerInput({
+				event: {
+					type: "session.idle",
+					properties: {
+						sessionID: sessionId,
+					},
+				},
+			}))
+			await eventHandler(asEventHandlerInput({
+				event: {
+					type: "session.idle",
+					properties: {
+						sessionID: sessionId,
+					},
+				},
+			}))
+
+			//#then
+			expect(onEvent).toHaveBeenCalledTimes(1)
+			expect(sessionNotification).toHaveBeenCalledTimes(1)
+
+			//#when
+			currentNow += 501
+			await eventHandler(asEventHandlerInput({
+				event: {
+					type: "session.idle",
+					properties: {
+						sessionID: sessionId,
+					},
+				},
+			}))
+
+			//#then
+			expect(onEvent).toHaveBeenCalledTimes(2)
+			expect(sessionNotification).toHaveBeenCalledTimes(2)
+		} finally {
+			Date.now = originalDateNow
+		}
+	})
+
+	it("still dedups synthetic-idle-after-real-idle as before", async () => {
 		//#given
 		const dispatchCalls: EventInput[] = []
 		const eventHandler = createIdleTrackingEventHandler(dispatchCalls)
@@ -353,6 +437,45 @@ afterEach(() => {
 		expect(dispatchCalls).toHaveLength(1)
 		expect(dispatchCalls[0]?.event.type).toBe("session.idle")
 		expect((dispatchCalls[0]?.event.properties as { sessionID?: string } | undefined)?.sessionID).toBe(sessionId)
+	})
+
+	it("does NOT dedup session.idle events for DIFFERENT sessionIDs", async () => {
+		//#given
+		const originalDateNow = Date.now
+		let currentNow = 20_000
+		Date.now = () => currentNow
+		const onEvent = mock<(event: EventInput["event"]) => void>(() => {})
+		const sessionNotification = mock(async (_input: EventInput) => {})
+		const eventHandler = createIdleDedupSpyEventHandler({
+			onEvent,
+			sessionNotification,
+		})
+
+		try {
+			//#when
+			await eventHandler(asEventHandlerInput({
+				event: {
+					type: "session.idle",
+					properties: {
+						sessionID: "ses_first_idle",
+					},
+				},
+			}))
+			await eventHandler(asEventHandlerInput({
+				event: {
+					type: "session.idle",
+					properties: {
+						sessionID: "ses_second_idle",
+					},
+				},
+			}))
+
+			//#then
+			expect(onEvent).toHaveBeenCalledTimes(2)
+			expect(sessionNotification).toHaveBeenCalledTimes(2)
+		} finally {
+			Date.now = originalDateNow
+		}
 	})
 
 	it("both maps pruned on every event", async () => {
