@@ -1,10 +1,11 @@
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import { log } from "../../../shared/logger"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { canVisualize, removeTeamLayout } from "../team-layout-tmux/layout"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { unregisterTeamSessionsByTeam } from "../team-session-registry"
-import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
+import { loadRuntimeState, saveRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { RuntimeState } from "../types"
 import { DELETABLE_MEMBER_STATUSES, removeWorktrees } from "./shutdown-helpers"
 
@@ -15,11 +16,19 @@ const DELETABLE_TEAM_STATUSES = new Set<RuntimeState["status"]>([
   "deleted",
 ])
 
+const FORCE_DELETABLE_TEAM_STATUSES = new Set<RuntimeState["status"]>([
+  ...DELETABLE_TEAM_STATUSES,
+  "creating",
+  "orphaned",
+])
+
 const FORCE_COMPLETABLE_MEMBER_STATUSES = new Set<RuntimeState["members"][number]["status"]>([
   "pending",
   "running",
   "idle",
 ])
+
+const FORCE_BYPASS_DELETING_STATUSES = new Set<RuntimeState["status"]>(["creating", "orphaned"])
 
 export async function deleteTeam(
   teamRunId: string,
@@ -54,24 +63,45 @@ export async function deleteTeam(
     throw new Error("members still active")
   }
 
-  if (!DELETABLE_TEAM_STATUSES.has(runtimeState.status)) {
+  const deletableTeamStatuses = options?.force === true
+    ? FORCE_DELETABLE_TEAM_STATUSES
+    : DELETABLE_TEAM_STATUSES
+  if (!deletableTeamStatuses.has(runtimeState.status)) {
     throw new Error(`team cannot be deleted from '${runtimeState.status}'`)
   }
 
   if (runtimeState.status !== "deleting" && runtimeState.status !== "deleted") {
-    await transitionRuntimeState(teamRunId, (currentRuntimeState) => (
-      currentRuntimeState.status === "deleting"
-        ? currentRuntimeState
-        : { ...currentRuntimeState, status: "deleting" }
-    ), config)
+    if (options?.force === true && FORCE_BYPASS_DELETING_STATUSES.has(runtimeState.status)) {
+      const currentRuntimeState = await loadRuntimeState(teamRunId, config)
+      if (currentRuntimeState.status !== "deleting" && currentRuntimeState.status !== "deleted") {
+        await saveRuntimeState({ ...currentRuntimeState, status: "deleting" }, config)
+      }
+    } else {
+      await transitionRuntimeState(teamRunId, (currentRuntimeState) => (
+        currentRuntimeState.status === "deleting"
+          ? currentRuntimeState
+          : { ...currentRuntimeState, status: "deleting" }
+      ), config)
+    }
   }
 
   const removedLayout = tmuxMgr !== undefined && canVisualize()
   if (removedLayout) {
-    await removeTeamLayout(teamRunId, tmuxMgr)
+    if (options?.force === true) {
+      try {
+        await removeTeamLayout(teamRunId, tmuxMgr)
+      } catch (error) {
+        log("team delete layout cleanup failed", {
+          teamRunId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    } else {
+      await removeTeamLayout(teamRunId, tmuxMgr)
+    }
   }
 
-  const removedWorktrees = await removeWorktrees(nonLeadMembers.map((member) => member.worktreePath))
+  const removedWorktrees = await removeWorktrees(runtimeState.members.map((member) => member.worktreePath))
 
   if (runtimeState.status !== "deleted") {
     await transitionRuntimeState(teamRunId, (currentRuntimeState) => (

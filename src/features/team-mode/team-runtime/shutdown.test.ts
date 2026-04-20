@@ -1,10 +1,14 @@
 /// <reference types="bun-types" />
 
-import { afterEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { access, mkdir, rm } from "node:fs/promises"
+import path from "node:path"
 
 import { sendMessage } from "../team-mailbox/send"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
+import * as logger from "../../../shared/logger"
+import * as layoutModule from "../team-layout-tmux/layout"
+import * as runtimeStateStore from "../team-state-store/store"
 import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import {
   createFixture,
@@ -22,6 +26,7 @@ describe("team-runtime shutdown", () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
       await rm(directoryPath, { recursive: true, force: true })
     }))
+    mock.restore()
   })
 
   test("refuses team deletion while non-lead members are still active", async () => {
@@ -181,6 +186,138 @@ describe("team-runtime shutdown", () => {
         () => undefined,
       )
     }))
+    const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
+    await access(runtimeStateDirectory).then(
+      () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
+      () => undefined,
+    )
+  })
+
+  test("force deletes a team stuck in 'creating' status", async () => {
+    // given
+    const fixture = await createFixture({ status: "creating" })
+    temporaryDirectories.push(fixture.baseDir)
+    const transitionedStatuses: string[] = []
+    const originalTransitionRuntimeState = runtimeStateStore.transitionRuntimeState
+    spyOn(runtimeStateStore, "transitionRuntimeState").mockImplementation(async (teamRunId, transition, config) => {
+      const currentRuntimeState = await runtimeStateStore.loadRuntimeState(teamRunId, config)
+      transitionedStatuses.push(transition(currentRuntimeState).status)
+      return await originalTransitionRuntimeState(teamRunId, transition, config)
+    })
+    await updateMemberStatuses(fixture.teamRunId, fixture.config, {
+      "member-a": "pending",
+      "member-b": "pending",
+    })
+
+    // when
+    await deleteTeam(fixture.teamRunId, fixture.config, undefined, undefined, { force: true })
+
+    // then
+    expect(transitionedStatuses).toContain("deleted")
+    const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
+    await access(runtimeStateDirectory).then(
+      () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
+      () => undefined,
+    )
+  })
+
+  test("force deletes a team in 'orphaned' status", async () => {
+    // given
+    const fixture = await createFixture({ status: "orphaned" })
+    temporaryDirectories.push(fixture.baseDir)
+    const transitionedStatuses: string[] = []
+    const originalTransitionRuntimeState = runtimeStateStore.transitionRuntimeState
+    spyOn(runtimeStateStore, "transitionRuntimeState").mockImplementation(async (teamRunId, transition, config) => {
+      const currentRuntimeState = await runtimeStateStore.loadRuntimeState(teamRunId, config)
+      transitionedStatuses.push(transition(currentRuntimeState).status)
+      return await originalTransitionRuntimeState(teamRunId, transition, config)
+    })
+    await updateMemberStatuses(fixture.teamRunId, fixture.config, {
+      "member-a": "running",
+      "member-b": "running",
+    })
+
+    // when
+    await deleteTeam(fixture.teamRunId, fixture.config, undefined, undefined, { force: true })
+
+    // then
+    expect(transitionedStatuses).toContain("deleted")
+    const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
+    await access(runtimeStateDirectory).then(
+      () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },
+      () => undefined,
+    )
+  })
+
+  test("force removes lead member worktree if present", async () => {
+    // given
+    const fixture = await createFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    const leadWorktreePath = path.join(fixture.baseDir, "fixture-worktrees", "lead")
+    await transitionRuntimeState(fixture.teamRunId, (runtimeState) => ({
+      ...runtimeState,
+      members: runtimeState.members.map((member) => member.name === "lead"
+        ? { ...member, worktreePath: leadWorktreePath }
+        : member),
+    }), fixture.config)
+    await mkdir(leadWorktreePath, { recursive: true })
+    await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
+      await mkdir(worktreePath, { recursive: true })
+    }))
+    await updateMemberStatuses(fixture.teamRunId, fixture.config, {
+      "member-a": "running",
+      "member-b": "running",
+    })
+
+    // when
+    const result = await deleteTeam(fixture.teamRunId, fixture.config, undefined, undefined, { force: true })
+
+    // then
+    expect(result.removedWorktrees.sort()).toEqual([leadWorktreePath, ...fixture.worktreePaths].sort())
+    await access(leadWorktreePath).then(
+      () => { throw new Error(`expected ${leadWorktreePath} to be removed`) },
+      () => undefined,
+    )
+  })
+
+  test("force continues cleanup when removeTeamLayout throws", async () => {
+    // given
+    const fixture = await createFixture()
+    temporaryDirectories.push(fixture.baseDir)
+    const transitionedStatuses: string[] = []
+    const originalTransitionRuntimeState = runtimeStateStore.transitionRuntimeState
+    spyOn(runtimeStateStore, "transitionRuntimeState").mockImplementation(async (teamRunId, transition, config) => {
+      const currentRuntimeState = await runtimeStateStore.loadRuntimeState(teamRunId, config)
+      transitionedStatuses.push(transition(currentRuntimeState).status)
+      return await originalTransitionRuntimeState(teamRunId, transition, config)
+    })
+    spyOn(layoutModule, "canVisualize").mockReturnValue(true)
+    spyOn(layoutModule, "removeTeamLayout").mockRejectedValue(new Error("layout failed"))
+    const logSpy = spyOn(logger, "log").mockImplementation(() => {})
+    await updateMemberStatuses(fixture.teamRunId, fixture.config, {
+      "member-a": "running",
+      "member-b": "idle",
+    })
+    await Promise.all(fixture.worktreePaths.map(async (worktreePath) => {
+      await mkdir(worktreePath, { recursive: true })
+    }))
+
+    // when
+    const result = await deleteTeam(
+      fixture.teamRunId,
+      fixture.config,
+      { getServerUrl: () => "http://localhost" } as never,
+      undefined,
+      { force: true },
+    )
+
+    // then
+    expect(result.removedLayout).toBe(true)
+    expect(transitionedStatuses).toContain("deleted")
+    expect(logSpy).toHaveBeenCalledWith("team delete layout cleanup failed", {
+      teamRunId: fixture.teamRunId,
+      error: "layout failed",
+    })
     const runtimeStateDirectory = getRuntimeStateDir(resolveBaseDir(fixture.config), fixture.teamRunId)
     await access(runtimeStateDirectory).then(
       () => { throw new Error(`expected ${runtimeStateDirectory} to be removed`) },

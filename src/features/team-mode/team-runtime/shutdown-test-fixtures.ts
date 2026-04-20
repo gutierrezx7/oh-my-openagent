@@ -51,7 +51,7 @@ export function createSpec(worktreeRoot: string): TeamSpec {
   }
 }
 
-export async function createFixture(): Promise<{
+export async function createFixture(options?: { status?: RuntimeState["status"] }): Promise<{
   baseDir: string
   config: TeamModeConfig
   teamRunId: string
@@ -68,7 +68,7 @@ export async function createFixture(): Promise<{
     teamName: createSpec(worktreeRoot).name,
     specSource: "project",
     createdAt: Date.now(),
-    status: "creating",
+    status: options?.status ?? "active",
     leadSessionId: "lead-session",
     members: [
       { name: "lead", agentType: "leader", status: "pending", pendingInjectedMessageIds: [] },
@@ -98,10 +98,6 @@ export async function createFixture(): Promise<{
   }
   await mkdir(getRuntimeStateDir(resolveBaseDir(config), teamRunId), { recursive: true })
   await saveRuntimeState(runtimeState, config)
-  await transitionRuntimeState(runtimeState.teamRunId, (currentRuntimeState) => ({
-    ...currentRuntimeState,
-    status: "active",
-  }), config)
 
   return {
     baseDir,

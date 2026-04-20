@@ -158,6 +158,56 @@ describe("team lifecycle tools", () => {
     expect(hasRuntime(created.teamRunId)).toBe(false)
   })
 
+  test("team_delete force=true allows non-lead caller on orphaned team", async () => {
+    // given
+    const createTool = createTeamCreateTool(config, mockClient, backgroundManager)
+    const deleteTool = createTeamDeleteTool(config, mockClient, backgroundManager)
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
+    const runtimeState = requireRuntime(created.teamRunId)
+    runtimeState.status = "orphaned"
+    const memberSessionId = runtimeState.members.find((member) => member.name === "member-a")?.sessionId
+
+    // when
+    const result = parseToolResult<{ deleted: boolean }>(await deleteTool.execute(
+      { teamRunId: created.teamRunId, force: true },
+      createToolContext(memberSessionId ?? "member-a-session"),
+    ))
+
+    // then
+    expect(result.deleted).toBe(true)
+    expect(hasRuntime(created.teamRunId)).toBe(false)
+  })
+
+  test("team_delete still rejects non-participants even with force=true", async () => {
+    // given
+    const createTool = createTeamCreateTool(config, mockClient, backgroundManager)
+    const deleteTool = createTeamDeleteTool(config, mockClient, backgroundManager)
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
+    requireRuntime(created.teamRunId).status = "orphaned"
+
+    // when
+    const result = deleteTool.execute({ teamRunId: created.teamRunId, force: true }, createToolContext("outside-session"))
+
+    // then
+    expect(result).rejects.toThrow("team_delete is lead-only")
+  })
+
+  test("team_delete force=false on orphaned team still requires lead", async () => {
+    // given
+    const createTool = createTeamCreateTool(config, mockClient, backgroundManager)
+    const deleteTool = createTeamDeleteTool(config, mockClient, backgroundManager)
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
+    const runtimeState = requireRuntime(created.teamRunId)
+    runtimeState.status = "orphaned"
+    const memberSessionId = runtimeState.members.find((member) => member.name === "member-a")?.sessionId
+
+    // when
+    const result = deleteTool.execute({ teamRunId: created.teamRunId }, createToolContext(memberSessionId ?? "member-a-session"))
+
+    // then
+    expect(result).rejects.toThrow("team_delete is lead-only")
+  })
+
   test("team_create is idempotent for the same spec and lead session", async () => {
     // given
     const teamCreateTool = createTeamCreateTool(config, mockClient, backgroundManager)

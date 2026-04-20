@@ -109,6 +109,12 @@ export const deleteTeamMock = mock(async (
   options?: { force?: boolean },
 ) => {
   const runtimeState = requireRuntime(teamRunId)
+  const deletableStatuses = options?.force
+    ? new Set<RuntimeState["status"]>(["active", "shutdown_requested", "deleting", "deleted", "creating", "orphaned"])
+    : new Set<RuntimeState["status"]>(["active", "shutdown_requested", "deleting", "deleted"])
+  if (!deletableStatuses.has(runtimeState.status)) {
+    throw new Error(`team cannot be deleted from '${runtimeState.status}'`)
+  }
   if (!options?.force && runtimeState.members.some((member) => member.agentType !== "leader" && member.status !== "shutdown_approved" && member.status !== "completed" && member.status !== "errored")) {
     throw new Error("members still active")
   }
