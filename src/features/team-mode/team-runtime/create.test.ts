@@ -260,6 +260,8 @@ describe("createTeamRun", () => {
     // then
     expect(launchMock).toHaveBeenCalledTimes(1)
     expect(launchMock.mock.calls[0]?.[0]).toMatchObject({ description: "Create team member alpha-team/member-1" })
+    expect(resolveMemberMock).toHaveBeenCalledTimes(1)
+    expect(resolveMemberMock.mock.calls[0]?.[0]).toMatchObject({ name: "member-1" })
     expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
       { name: "lead", sessionId: "lead-session" },
       { name: "member-1", sessionId: "member-1-agent-session-1" },
