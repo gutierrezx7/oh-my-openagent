@@ -37,6 +37,22 @@ describe("rebalanceTeamWindowWith", () => {
     ])
   })
 
+  it("#given focus windowId and pane-list shrunk from 3 to 2 #when rebalanceTeamWindow runs #then select-layout is invoked with main-vertical", async () => {
+    // given
+    const deps: RebalanceTeamWindowDeps = { runTmux, log }
+
+    // when
+    const result = await rebalanceTeamWindowWith("@focus", "main-vertical", deps)
+
+    // then
+    expect(result).toBe(true)
+    expect(calls).toEqual([
+      ["select-layout", "-t", "@focus", "main-vertical"],
+      ["set-window-option", "-t", "@focus", "main-pane-width", "60%"],
+      ["select-layout", "-t", "@focus", "main-vertical"],
+    ])
+  })
+
   it("#given tiled #when rebalance #then only select-layout called", async () => {
     // given
     const deps: RebalanceTeamWindowDeps = { runTmux, log }

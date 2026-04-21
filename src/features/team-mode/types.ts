@@ -127,6 +127,7 @@ const RuntimeStateMemberSchema = z.object({
   name: z.string(),
   sessionId: z.string().optional(),
   tmuxPaneId: z.string().optional(),
+  tmuxGridPaneId: z.string().optional(),
   agentType: z.enum(["leader", "general-purpose"]),
   subagent_type: z.string().optional(),
   model: RuntimeStateMemberModelSchema.optional(),
@@ -154,6 +155,13 @@ const ShutdownRequestSchema = z.object({
   rejectedAt: z.number().int().positive().optional(),
 }).strict()
 
+const RuntimeStateTmuxLayoutSchema = z.object({
+  ownedSession: z.boolean(),
+  targetSessionId: z.string(),
+  focusWindowId: z.string().optional(),
+  gridWindowId: z.string().optional(),
+}).strict()
+
 export const RuntimeStateSchema = z.object({
   version: z.literal(1),
   teamRunId: z.string().uuid(),
@@ -162,6 +170,7 @@ export const RuntimeStateSchema = z.object({
   createdAt: z.number().int().positive(),
   status: z.enum(RUNTIME_STATUSES),
   leadSessionId: z.string().optional(),
+  tmuxLayout: RuntimeStateTmuxLayoutSchema.optional(),
   members: z.array(RuntimeStateMemberSchema),
   shutdownRequests: z.array(ShutdownRequestSchema).default([]),
   bounds: RuntimeBoundsSchema,

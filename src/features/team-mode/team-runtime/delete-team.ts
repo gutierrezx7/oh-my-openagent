@@ -89,7 +89,7 @@ export async function deleteTeam(
   if (removedLayout) {
     if (options?.force === true) {
       try {
-        await removeTeamLayout(teamRunId, tmuxMgr)
+        await removeTeamLayout(teamRunId, runtimeState.tmuxLayout, tmuxMgr)
       } catch (error) {
         log("team delete layout cleanup failed", {
           teamRunId,
@@ -97,7 +97,7 @@ export async function deleteTeam(
         })
       }
     } else {
-      await removeTeamLayout(teamRunId, tmuxMgr)
+      await removeTeamLayout(teamRunId, runtimeState.tmuxLayout, tmuxMgr)
     }
   }
 

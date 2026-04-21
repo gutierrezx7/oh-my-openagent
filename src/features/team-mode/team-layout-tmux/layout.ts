@@ -3,13 +3,24 @@ import { shellSingleQuote } from "../../../shared/shell-env"
 import { isServerRunning, runTmuxCommand } from "../../../shared/tmux"
 import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
+import { resolveCallerTmuxSession } from "./resolve-caller-tmux-session"
 
 type TeamLayoutMember = { name: string; sessionId: string; worktreePath?: string }
 
-type TeamLayoutResult = {
+export type TeamLayoutResult = {
   focusWindowId: string
   gridWindowId: string
-  panesByMember: Record<string, string>
+  focusPanesByMember: Record<string, string>
+  gridPanesByMember: Record<string, string>
+  targetSessionId: string
+  ownedSession: boolean
+}
+
+export type TeamLayoutCleanupTarget = {
+  ownedSession: boolean
+  targetSessionId: string
+  focusWindowId?: string
+  gridWindowId?: string
 }
 
 export function canVisualize(): boolean { return process.env.TMUX !== undefined }
@@ -36,7 +47,7 @@ function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string
 
 async function createWindow(
   tmuxPath: string,
-  sessionName: string,
+  targetSessionId: string,
   windowName: string,
   layout: "main-vertical" | "tiled",
   members: Array<TeamLayoutMember>,
@@ -52,7 +63,7 @@ async function createWindow(
     "-F",
     "#{window_id} #{pane_id}",
     "-t",
-    sessionName,
+    targetSessionId,
     "-n",
     windowName,
     "-c",
@@ -116,18 +127,29 @@ export async function createTeamLayout(teamRunId: string, members: Array<TeamLay
       return null
     }
 
-    const sessionName = `omo-team-${teamRunId}`
-    const created = await runTmuxCommand(tmuxPath, ["new-session", "-d", "-s", sessionName, "-P", "-F", "#{window_id}"])
-    if (!created.success || !created.output) return null
+    const callerSession = await resolveCallerTmuxSession(tmuxPath)
+    const fallbackSessionName = `omo-team-${teamRunId}`
+    const ownedSession = callerSession === null
+    const targetSessionId = callerSession?.sessionId ?? fallbackSessionName
 
-    const focus = await createWindow(tmuxPath, sessionName, "focus", "main-vertical", members, serverUrl)
-    const grid = await createWindow(tmuxPath, sessionName, "grid", "tiled", members, serverUrl)
+    if (ownedSession) {
+      log("falling back to detached team session because caller tmux session could not be resolved", { teamRunId })
+      const created = await runTmuxCommand(tmuxPath, ["new-session", "-d", "-s", fallbackSessionName, "-P", "-F", "#{window_id}"])
+      if (!created.success || !created.output) return null
+    }
+
+    const teamRunSuffix = teamRunId.slice(0, 8)
+    const focus = await createWindow(tmuxPath, targetSessionId, `focus-${teamRunSuffix}`, "main-vertical", members, serverUrl)
+    const grid = await createWindow(tmuxPath, targetSessionId, `grid-${teamRunSuffix}`, "tiled", members, serverUrl)
     if (!focus || !grid) return null
 
     return {
       focusWindowId: focus.windowId,
       gridWindowId: grid.windowId,
-      panesByMember: focus.panesByMember,
+      focusPanesByMember: focus.panesByMember,
+      gridPanesByMember: grid.panesByMember,
+      targetSessionId,
+      ownedSession,
     }
   } catch (error) {
     log("tmux visualization unavailable, skipping", { error: String(error) })
@@ -135,13 +157,53 @@ export async function createTeamLayout(teamRunId: string, members: Array<TeamLay
   }
 }
 
-export async function removeTeamLayout(teamRunId: string, _tmuxMgr: TmuxSessionManager): Promise<void> {
+export async function removeTeamLayout(teamRunId: string, _tmuxMgr: TmuxSessionManager): Promise<void>
+export async function removeTeamLayout(
+  teamRunId: string,
+  _cleanupTarget: TeamLayoutCleanupTarget | undefined,
+  _tmuxMgr: TmuxSessionManager,
+): Promise<void>
+export async function removeTeamLayout(
+  teamRunId: string,
+  tmuxMgrOrCleanupTarget: TmuxSessionManager | TeamLayoutCleanupTarget | undefined,
+  _tmuxMgr?: TmuxSessionManager,
+): Promise<void> {
   if (!canVisualize()) return
   try {
     const tmuxPath = await getTmuxPath()
     if (!tmuxPath) return
-    await runTmuxCommand(tmuxPath, ["kill-session", "-t", `omo-team-${teamRunId}`])
+
+    const cleanupTarget = isTeamLayoutCleanupTarget(tmuxMgrOrCleanupTarget)
+      ? tmuxMgrOrCleanupTarget
+      : undefined
+
+    if (cleanupTarget?.ownedSession !== false) {
+      await runTmuxCommand(tmuxPath, [
+        "kill-session",
+        "-t",
+        cleanupTarget?.targetSessionId ?? `omo-team-${teamRunId}`,
+      ])
+      return
+    }
+
+    for (const windowId of [cleanupTarget.focusWindowId, cleanupTarget.gridWindowId]) {
+      if (!windowId) continue
+
+      try {
+        await runTmuxCommand(tmuxPath, ["kill-window", "-t", windowId])
+      } catch (windowError) {
+        log("tmux team layout window cleanup failed", {
+          teamRunId,
+          windowId,
+          error: String(windowError),
+        })
+      }
+    }
   } catch (error) {
     log("tmux team layout cleanup failed", { teamRunId, error: String(error) })
   }
+}
+
+function isTeamLayoutCleanupTarget(value: TmuxSessionManager | TeamLayoutCleanupTarget | undefined): value is TeamLayoutCleanupTarget {
+  return value !== undefined && "ownedSession" in value && "targetSessionId" in value
 }

@@ -5,7 +5,7 @@ import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
 import { removeTeamLayout } from "../team-layout-tmux/layout"
 import { unregisterTeamSessionsByTeam } from "../team-session-registry"
-import { transitionRuntimeState } from "../team-state-store/store"
+import { loadRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { TeamRunCreateError } from "./create"
 
 type SpawnedMemberResource = {
@@ -58,7 +58,8 @@ export async function cleanupTeamRunResources(args: {
 
   if (args.createdLayout && args.tmuxMgr) {
     try {
-      await removeTeamLayout(args.teamRunId, args.tmuxMgr)
+      const runtimeState = await loadRuntimeState(args.teamRunId, args.config)
+      await removeTeamLayout(args.teamRunId, runtimeState.tmuxLayout, args.tmuxMgr)
       cleanupReport.removedLayout = true
     } catch (layoutError) {
       cleanupReport.errors.push(`layout ${args.teamRunId}: ${normalizeError(layoutError).message}`)
