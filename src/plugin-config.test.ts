@@ -20,11 +20,34 @@ async function importFreshPluginConfigModule(): Promise<typeof import("./plugin-
 
 afterEach(() => {
   mock.restore()
+  delete process.env.OPENCODE_CONFIG_DIR
 
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+function createLoadPluginConfigTestContext(prefix: string): {
+  rootDir: string
+  userConfigDir: string
+  projectDir: string
+  projectConfigDir: string
+} {
+  const rootDir = mkdtempSync(join(tmpdir(), prefix))
+  const userConfigDir = join(rootDir, "user-config")
+  const projectDir = join(rootDir, "project")
+  const projectConfigDir = join(projectDir, ".opencode")
+
+  tempDirs.push(rootDir)
+  mkdirSync(userConfigDir, { recursive: true })
+  mkdirSync(projectConfigDir, { recursive: true })
+
+  return { rootDir, userConfigDir, projectDir, projectConfigDir }
+}
+
+function writeJsonFile(filePath: string, value: Record<string, unknown>): void {
+  writeFileSync(filePath, JSON.stringify(value))
+}
 
 describe("mergeConfigs", () => {
   describe("categories merging", () => {
@@ -535,6 +558,85 @@ describe("loadPluginConfig", () => {
       commit_footer: true,
       include_co_authored_by: false,
       git_env_prefix: "GIT_MASTER=1",
+    })
+  })
+
+  describe("team_mode.tmux_visualization", () => {
+    it("#given canonical user config enables team_mode and legacy config also exists #when loadPluginConfig runs #then tmux_visualization remains false", async () => {
+      // given
+      const { userConfigDir, projectDir } = createLoadPluginConfigTestContext("omo-plugin-config-team-mode-user-")
+
+      writeJsonFile(join(userConfigDir, "oh-my-openagent.json"), {
+        team_mode: {
+          enabled: true,
+        },
+      })
+      writeJsonFile(join(userConfigDir, "oh-my-opencode.json"), {
+        agents: {
+          oracle: {
+            model: "openai/gpt-5.4",
+          },
+        },
+      })
+
+      process.env.OPENCODE_CONFIG_DIR = userConfigDir
+
+      // when
+      const { loadPluginConfig } = await importFreshPluginConfigModule()
+      const config = loadPluginConfig(projectDir, {})
+
+      // then
+      expect(config.team_mode?.enabled).toBe(true)
+      expect(config.team_mode?.tmux_visualization).toBe(false)
+    })
+
+    it("#given canonical user config lacks team_mode and legacy config only enables team_mode #when loadPluginConfig runs #then canonical config wins and tmux_visualization stays effectively false", async () => {
+      // given
+      const { userConfigDir, projectDir } = createLoadPluginConfigTestContext("omo-plugin-config-team-mode-legacy-")
+
+      writeJsonFile(join(userConfigDir, "oh-my-openagent.json"), {
+        hashline_edit: true,
+      })
+      writeJsonFile(join(userConfigDir, "oh-my-opencode.json"), {
+        team_mode: {
+          enabled: true,
+        },
+      })
+
+      process.env.OPENCODE_CONFIG_DIR = userConfigDir
+
+      // when
+      const { loadPluginConfig } = await importFreshPluginConfigModule()
+      const config = loadPluginConfig(projectDir, {})
+
+      // then
+      expect(config.team_mode).toBeUndefined()
+      expect(config.team_mode?.tmux_visualization ?? false).toBe(false)
+    })
+
+    it("#given canonical user config lacks team_mode and legacy config sets tmux_visualization=true #when loadPluginConfig runs #then legacy team_mode is not promoted into the loaded config", async () => {
+      // given
+      const { userConfigDir, projectDir } = createLoadPluginConfigTestContext("omo-plugin-config-team-mode-visualization-")
+
+      writeJsonFile(join(userConfigDir, "oh-my-openagent.json"), {
+        hashline_edit: true,
+      })
+      writeJsonFile(join(userConfigDir, "oh-my-opencode.json"), {
+        team_mode: {
+          enabled: true,
+          tmux_visualization: true,
+        },
+      })
+
+      process.env.OPENCODE_CONFIG_DIR = userConfigDir
+
+      // when
+      const { loadPluginConfig } = await importFreshPluginConfigModule()
+      const config = loadPluginConfig(projectDir, {})
+
+      // then
+      // This proves a concurrent canonical file suppresses the legacy team_mode subtree entirely.
+      expect(config.team_mode).toBeUndefined()
     })
   })
 })
