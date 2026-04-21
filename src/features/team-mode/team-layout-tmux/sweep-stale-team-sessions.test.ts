@@ -125,4 +125,31 @@ describe("sweepStaleTeamSessionsWith", () => {
 		expect(fixture.killedSessionNames).toEqual(["omo-team-A"])
 		expect(result).toEqual(["omo-team-A"])
 	})
+
+	it("#given new caller-session topology rolled out with no omo-team-<uuid> candidates #when sweep runs #then the result is empty and killSession is never called", async () => {
+		// given
+		const fixture = createFixture(["main", "dev-shell", "project-grid"])
+		const activeTeamRunIds = new Set<string>(["still-active-run"])
+
+		// when
+		const result = await sweepStaleTeamSessionsWith(activeTeamRunIds, fixture.deps)
+
+		// then
+		expect(result).toEqual([])
+		expect(fixture.killSessionMock).toHaveBeenCalledTimes(0)
+	})
+
+	it("#given a legacy orphan 'omo-team-ABCDEF' from a pre-rollout run #when sweep runs #then that orphan is still detected and killed to clear historical rubble", async () => {
+		// given
+		const fixture = createFixture(["main", "omo-team-ABCDEF", "dev-shell"])
+		const activeTeamRunIds = new Set<string>()
+
+		// when
+		const result = await sweepStaleTeamSessionsWith(activeTeamRunIds, fixture.deps)
+
+		// then
+		expect(fixture.killSessionMock).toHaveBeenCalledTimes(1)
+		expect(fixture.killedSessionNames).toEqual(["omo-team-ABCDEF"])
+		expect(result).toEqual(["omo-team-ABCDEF"])
+	})
 })
