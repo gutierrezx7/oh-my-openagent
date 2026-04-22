@@ -153,6 +153,10 @@ export async function createTeamLayout(teamRunId: string, members: Array<TeamLay
     const grid = await createWindow(tmuxPath, targetSessionId, `grid-${teamRunSuffix}`, "tiled", members, serverUrl)
     if (!focus || !grid) return null
 
+    if (!ownedSession) {
+      await runTmuxCommand(tmuxPath, ["select-window", "-t", grid.windowId])
+    }
+
     return {
       focusWindowId: focus.windowId,
       gridWindowId: grid.windowId,
