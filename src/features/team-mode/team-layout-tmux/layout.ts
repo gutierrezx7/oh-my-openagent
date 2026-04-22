@@ -29,6 +29,18 @@ function getPaneWorkingDirectory(member: TeamLayoutMember): string {
   return member.worktreePath ?? process.cwd()
 }
 
+const SHELL_READY_POLL_MS = 100
+const SHELL_READY_MAX_ATTEMPTS = 30
+
+async function waitForPaneShellReady(tmuxPath: string, paneIds: Array<string>): Promise<void> {
+  for (let attempt = 0; attempt < SHELL_READY_MAX_ATTEMPTS; attempt++) {
+    const results = await Promise.all(paneIds.map((paneId) =>
+      runTmuxCommand(tmuxPath, ["display", "-p", "-t", paneId, "#{pane_current_command}"])))
+    if (results.every((r) => r.success)) return
+    await new Promise((resolve) => setTimeout(resolve, SHELL_READY_POLL_MS))
+  }
+}
+
 function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string {
   return `opencode attach ${serverUrl} --session ${member.sessionId} --dir ${shellSingleQuote(getPaneWorkingDirectory(member))}`
 }
@@ -91,6 +103,8 @@ async function createWindow(
     await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-status", "top"])
     await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-format", "#{pane_title}"])
   }
+
+  await waitForPaneShellReady(tmuxPath, Object.values(panesByMember))
 
   for (const member of members) {
     const paneId = panesByMember[member.name]

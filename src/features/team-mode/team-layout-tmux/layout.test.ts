@@ -26,6 +26,10 @@ function createTmuxCommandResult(output: string, success = true) {
 const runTmuxCommandMock = mock((_tmuxPath: string, args: Array<string>, _options?: unknown) => {
   const command = args[0]
 
+  if (command === "display" && args.includes("#{pane_current_command}")) {
+    return Promise.resolve(createTmuxCommandResult("fish"))
+  }
+
   if (command === "display") {
     return Promise.resolve(createTmuxCommandResult(displaySessionId, displaySuccess))
   }
