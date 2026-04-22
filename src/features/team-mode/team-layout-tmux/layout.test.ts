@@ -135,14 +135,18 @@ describe("team-layout-tmux", () => {
     const splitWindowCalls = commands.filter((args) => args[0] === "split-window")
     expect(newWindowCalls.length).toBeGreaterThan(0)
     expect(splitWindowCalls.length).toBeGreaterThan(0)
-    const leadSnippet = "opencode attach 'http://127.0.0.1:12345' --session 's-lead' --dir '/tmp/lead'"
-    const m2Snippet = "opencode attach 'http://127.0.0.1:12345' --session 's-m2' --dir '/tmp/m2'"
     for (const call of newWindowCalls) {
       const last = call[call.length - 1] ?? ""
-      expect(last).toContain(leadSnippet)
+      expect(last).not.toContain("opencode")
     }
-    const splitSnippets = splitWindowCalls.map((call) => call[call.length - 1] ?? "")
-    expect(splitSnippets.some((snippet) => snippet.includes(m2Snippet))).toBe(true)
+    for (const call of splitWindowCalls) {
+      const last = call[call.length - 1] ?? ""
+      expect(last).not.toContain("opencode")
+    }
+    const sendKeysCalls = commands.filter((args) => args[0] === "send-keys" && args.includes("-l"))
+    const sendKeysLiterals = sendKeysCalls.map((args) => args[args.length - 1] ?? "")
+    expect(sendKeysLiterals.some((s) => s.includes("--session s-lead") && s.includes("--dir"))).toBe(true)
+    expect(sendKeysLiterals.some((s) => s.includes("--session s-m2") && s.includes("--dir"))).toBe(true)
   })
 
   test("creates focus (main-vertical) and grid (tiled) windows", async () => {

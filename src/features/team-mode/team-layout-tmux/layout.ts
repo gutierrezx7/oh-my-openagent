@@ -30,19 +30,7 @@ function getPaneWorkingDirectory(member: TeamLayoutMember): string {
 }
 
 function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string {
-  // Single positional passed directly to tmux's default shell. Tmux parses the line
-  // into argv for opencode. Avoiding a sh -c wrapper keeps the TTY signal path
-  // clean so attach-mode streams and Ctrl-C propagate without nested-shell lag.
-  const parts = [
-    "opencode",
-    "attach",
-    shellSingleQuote(serverUrl),
-    "--session",
-    shellSingleQuote(member.sessionId),
-    "--dir",
-    shellSingleQuote(getPaneWorkingDirectory(member)),
-  ]
-  return parts.join(" ")
+  return `opencode attach ${serverUrl} --session ${member.sessionId} --dir ${shellSingleQuote(getPaneWorkingDirectory(member))}`
 }
 
 async function createWindow(
@@ -68,11 +56,12 @@ async function createWindow(
     windowName,
     "-c",
     getPaneWorkingDirectory(lead),
-    buildAttachCommand(lead, serverUrl),
   ])
   if (!created.success || !created.output) return null
   const [windowId, leadPaneId] = created.output.split(" ", 2)
   if (!windowId || !leadPaneId) return null
+
+  await runTmuxCommand(tmuxPath, ["set-option", "-w", "-t", windowId, "remain-on-exit", "on"])
 
   const panesByMember: Record<string, string> = {}
 
@@ -88,7 +77,6 @@ async function createWindow(
       windowId,
       "-c",
       getPaneWorkingDirectory(member),
-      buildAttachCommand(member, serverUrl),
     ])
     if (!split.success || !split.output) return null
     panesByMember[member.name] = split.output
@@ -102,6 +90,14 @@ async function createWindow(
     if (!(await runTmuxCommand(tmuxPath, ["select-pane", "-t", paneId, "-T", member.name])).success) return null
     await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-status", "top"])
     await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-format", "#{pane_title}"])
+  }
+
+  for (const member of members) {
+    const paneId = panesByMember[member.name]
+    if (!paneId) continue
+    const cmd = buildAttachCommand(member, serverUrl)
+    await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, "-l", cmd])
+    await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, "Enter"])
   }
 
   return { windowId, panesByMember }
