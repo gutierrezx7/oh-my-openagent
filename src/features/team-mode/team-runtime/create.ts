@@ -92,10 +92,29 @@ async function waitForTaskSessionId(bgMgr: BackgroundManager, task: BackgroundTa
   return sessionId
 }
 
+const TEAMMATE_COMMUNICATION_ADDENDUM = `
+# Team Communication
+
+You are running as a team member. Your text responses are NOT visible to other team members or the lead.
+
+To communicate, you MUST use team tools:
+- team_send_message: Send a message to the lead or another member. Use \`to: "lead"\` for the lead, \`to: "<name>"\` for a specific member, \`to: "*"\` for broadcast (lead-only).
+- team_task_update: Update your task status. Use \`status: "claimed"\` when starting, \`status: "in_progress"\` while working, \`status: "completed"\` when done.
+- team_task_list: See all team tasks and their status.
+- team_task_get: Get details of a specific task.
+- team_shutdown_request: Request to shut down when your work is complete.
+
+When you finish your assigned work, ALWAYS:
+1. Send your results to lead via team_send_message
+2. Mark your task as completed via team_task_update
+3. Request shutdown via team_shutdown_request
+`
+
 function buildMemberPrompt(spec: TeamSpec, member: TeamSpec["members"][number], worktreePath?: string): string {
   const promptLines = [`Team: ${spec.name}`, `Member: ${member.name}`]
   if (worktreePath) promptLines.push(`Worktree: ${worktreePath}`)
   if (member.prompt) promptLines.push(member.prompt)
+  promptLines.push(TEAMMATE_COMMUNICATION_ADDENDUM)
   return promptLines.join("\n")
 }
 

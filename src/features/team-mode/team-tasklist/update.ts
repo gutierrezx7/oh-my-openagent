@@ -16,6 +16,7 @@ const ALLOWED_TRANSITIONS: Readonly<Record<Task["status"], ReadonlyArray<Task["s
 }
 
 function isValidTransition(currentStatus: Task["status"], nextStatus: Task["status"]): boolean {
+  if (currentStatus === nextStatus) return true
   return ALLOWED_TRANSITIONS[currentStatus].includes(nextStatus)
 }
 
@@ -41,6 +42,8 @@ export async function updateTaskStatus(
   config: TeamModeConfig,
 ): Promise<Task> {
   const task = await getTask(teamRunId, taskId, config)
+
+  if (task.status === newStatus) return task
 
   if (!isValidTransition(task.status, newStatus)) {
     throw new InvalidTaskTransitionError(task.status, newStatus)

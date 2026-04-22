@@ -21,6 +21,7 @@ export type TeamLayoutCleanupTarget = {
   targetSessionId: string
   focusWindowId?: string
   gridWindowId?: string
+  paneIds?: Array<string>
 }
 
 export function canVisualize(): boolean { return process.env.TMUX !== undefined }
@@ -45,76 +46,12 @@ function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string
   return `opencode attach ${serverUrl} --session ${member.sessionId} --dir ${shellSingleQuote(getPaneWorkingDirectory(member))}`
 }
 
-async function createWindow(
-  tmuxPath: string,
-  targetSessionId: string,
-  windowName: string,
-  layout: "main-vertical" | "tiled",
-  members: Array<TeamLayoutMember>,
-  serverUrl: string,
-): Promise<{ windowId: string; panesByMember: Record<string, string> } | null> {
-  const [lead, ...rest] = members
-  if (!lead) return null
-
-  const created = await runTmuxCommand(tmuxPath, [
-    "new-window",
-    "-d",
-    "-P",
-    "-F",
-    "#{window_id} #{pane_id}",
-    "-t",
-    targetSessionId,
-    "-n",
-    windowName,
-    "-c",
-    getPaneWorkingDirectory(lead),
-  ])
-  if (!created.success || !created.output) return null
-  const [windowId, leadPaneId] = created.output.split(" ", 2)
-  if (!windowId || !leadPaneId) return null
-
-  await runTmuxCommand(tmuxPath, ["set-option", "-w", "-t", windowId, "remain-on-exit", "on"])
-
-  const panesByMember: Record<string, string> = {}
-
-  panesByMember[lead.name] = leadPaneId
-  for (const member of rest) {
-    const split = await runTmuxCommand(tmuxPath, [
-      "split-window",
-      "-d",
-      "-P",
-      "-F",
-      "#{pane_id}",
-      "-t",
-      windowId,
-      "-c",
-      getPaneWorkingDirectory(member),
-    ])
-    if (!split.success || !split.output) return null
-    panesByMember[member.name] = split.output
-  }
-
-  if (!(await runTmuxCommand(tmuxPath, ["select-layout", "-t", windowId, layout])).success) return null
-
-  for (const member of members) {
-    const paneId = panesByMember[member.name]
-    if (!paneId) return null
-    if (!(await runTmuxCommand(tmuxPath, ["select-pane", "-t", paneId, "-T", member.name])).success) return null
-    await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-status", "top"])
-    await runTmuxCommand(tmuxPath, ["set-option", "-t", paneId, "pane-border-format", "#{pane_title}"])
-  }
-
-  await waitForPaneShellReady(tmuxPath, Object.values(panesByMember))
-
-  for (const member of members) {
-    const paneId = panesByMember[member.name]
-    if (!paneId) continue
-    const cmd = buildAttachCommand(member, serverUrl)
-    await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, "-l", cmd])
-    await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, "Enter"])
-  }
-
-  return { windowId, panesByMember }
+async function resolveCurrentWindowId(tmuxPath: string): Promise<string | null> {
+  const callerPane = process.env.TMUX_PANE
+  if (!callerPane) return null
+  const result = await runTmuxCommand(tmuxPath, ["display", "-p", "-t", callerPane, "#{window_id}"])
+  if (!result.success || !result.output) return null
+  return result.output.trim()
 }
 
 export async function createTeamLayout(teamRunId: string, members: Array<TeamLayoutMember>, tmuxMgr: TmuxSessionManager): Promise<TeamLayoutResult | null> {
@@ -138,6 +75,8 @@ export async function createTeamLayout(teamRunId: string, members: Array<TeamLay
     }
 
     const callerSession = await resolveCallerTmuxSession(tmuxPath)
+    const callerPane = process.env.TMUX_PANE
+    const currentWindowId = await resolveCurrentWindowId(tmuxPath)
     const fallbackSessionName = `omo-team-${teamRunId}`
     const ownedSession = callerSession === null
     const targetSessionId = callerSession?.sessionId ?? fallbackSessionName
@@ -148,20 +87,51 @@ export async function createTeamLayout(teamRunId: string, members: Array<TeamLay
       if (!created.success || !created.output) return null
     }
 
-    const teamRunSuffix = teamRunId.slice(0, 8)
-    const focus = await createWindow(tmuxPath, targetSessionId, `focus-${teamRunSuffix}`, "main-vertical", members, serverUrl)
-    const grid = await createWindow(tmuxPath, targetSessionId, `grid-${teamRunSuffix}`, "tiled", members, serverUrl)
-    if (!focus || !grid) return null
+    const panesByMember: Record<string, string> = {}
+    const splitTarget = callerPane ?? targetSessionId
 
-    if (!ownedSession) {
-      await runTmuxCommand(tmuxPath, ["select-window", "-t", grid.windowId])
+    for (const member of members) {
+      const split = await runTmuxCommand(tmuxPath, [
+        "split-window",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        splitTarget,
+        "-c",
+        getPaneWorkingDirectory(member),
+      ])
+      if (!split.success || !split.output) continue
+      panesByMember[member.name] = split.output.trim()
+    }
+
+    if (Object.keys(panesByMember).length === 0) return null
+
+    const windowId = currentWindowId ?? targetSessionId
+    await runTmuxCommand(tmuxPath, ["select-layout", "-t", windowId, "tiled"])
+
+    for (const [name, paneId] of Object.entries(panesByMember)) {
+      await runTmuxCommand(tmuxPath, ["select-pane", "-t", paneId, "-T", name])
+      await runTmuxCommand(tmuxPath, ["set-option", "-p", "-t", paneId, "pane-border-status", "top"])
+      await runTmuxCommand(tmuxPath, ["set-option", "-p", "-t", paneId, "pane-border-format", "#{pane_title}"])
+    }
+
+    await waitForPaneShellReady(tmuxPath, Object.values(panesByMember))
+
+    for (const [, paneId] of Object.entries(panesByMember)) {
+      const member = members.find((m) => panesByMember[m.name] === paneId)
+      if (!member) continue
+      const cmd = buildAttachCommand(member, serverUrl)
+      await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, "-l", cmd])
+      await runTmuxCommand(tmuxPath, ["send-keys", "-t", paneId, "Enter"])
     }
 
     return {
-      focusWindowId: focus.windowId,
-      gridWindowId: grid.windowId,
-      focusPanesByMember: focus.panesByMember,
-      gridPanesByMember: grid.panesByMember,
+      focusWindowId: windowId,
+      gridWindowId: windowId,
+      focusPanesByMember: panesByMember,
+      gridPanesByMember: panesByMember,
       targetSessionId,
       ownedSession,
     }
@@ -200,9 +170,19 @@ export async function removeTeamLayout(
       return
     }
 
+    if (cleanupTarget.paneIds && cleanupTarget.paneIds.length > 0) {
+      for (const paneId of cleanupTarget.paneIds) {
+        try {
+          await runTmuxCommand(tmuxPath, ["kill-pane", "-t", paneId])
+        } catch {
+          log("tmux team pane cleanup failed", { teamRunId, paneId })
+        }
+      }
+      return
+    }
+
     for (const windowId of [cleanupTarget.focusWindowId, cleanupTarget.gridWindowId]) {
       if (!windowId) continue
-
       try {
         await runTmuxCommand(tmuxPath, ["kill-window", "-t", windowId])
       } catch (windowError) {
