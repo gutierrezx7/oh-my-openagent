@@ -15,6 +15,7 @@ const ALWAYS_ISOLATED_TEST_FILES = [
   "src/features/team-mode/team-runtime/status.test.ts",
   "src/features/team-mode/team-state-store/resume.test.ts",
   "src/features/team-mode/team-state-store/store.test.ts",
+  "src/hooks/anthropic-context-window-limit-recovery/aggressive-truncation-strategy.test.ts",
   "src/openclaw/__tests__/reply-listener-discord.test.ts",
 ] as const
 

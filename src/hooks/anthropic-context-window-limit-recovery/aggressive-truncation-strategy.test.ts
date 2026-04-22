@@ -1,7 +1,6 @@
 /// <reference types="bun-types" />
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
-import { _resetForTesting, setSessionAgent } from "../../features/claude-code-session-state"
 import type { AutoCompactState } from "./types"
 
 type PromptAsyncCall = {
@@ -34,6 +33,19 @@ const findNearestMessageWithFieldsMock = mock(() => null)
 mock.module("../../features/hook-message-injector", () => ({
   findNearestMessageWithFieldsFromSDK: findNearestMessageWithFieldsFromSDKMock,
   findNearestMessageWithFields: findNearestMessageWithFieldsMock,
+}))
+
+const sessionAgentMap = new Map<string, string>()
+const resolveRegisteredAgentNameMock = mock((name: string | undefined) => name)
+
+mock.module("../../features/claude-code-session-state/state", () => ({
+  _resetForTesting: () => { sessionAgentMap.clear() },
+  setSessionAgent: (sessionID: string, agent: string) => { sessionAgentMap.set(sessionID, agent) },
+  getSessionAgent: (sessionID: string) => sessionAgentMap.get(sessionID),
+  resolveRegisteredAgentName: resolveRegisteredAgentNameMock,
+  registerAgentName: () => {},
+  isAgentRegistered: () => false,
+  resolveInheritedPromptTools: () => undefined,
 }))
 
 import { runAggressiveTruncationStrategy } from "./aggressive-truncation-strategy"
@@ -77,23 +89,25 @@ async function flushDeferredPrompt(): Promise<void> {
 
 describe("runAggressiveTruncationStrategy - pins agent/model/variant on recovered promptAsync", () => {
   beforeEach(() => {
-    _resetForTesting()
+    sessionAgentMap.clear()
     truncateUntilTargetTokensMock.mockClear()
     findNearestMessageWithFieldsFromSDKMock.mockClear()
     findNearestMessageWithFieldsMock.mockClear()
+    resolveRegisteredAgentNameMock.mockClear()
     findNearestMessageWithFieldsFromSDKMock.mockResolvedValue(null)
     findNearestMessageWithFieldsMock.mockReturnValue(null)
+    resolveRegisteredAgentNameMock.mockImplementation((name: string | undefined) => name)
   })
 
   afterEach(() => {
-    _resetForTesting()
+    sessionAgentMap.clear()
   })
 
   test("includes the session's resolved agent on promptAsync when agent is known", async () => {
     // given
     const { client, calls } = createRecordingClient()
     const sessionID = "session-truncation-agent"
-    setSessionAgent(sessionID, "sisyphus-junior")
+    sessionAgentMap.set(sessionID, "sisyphus-junior")
 
     // when
     await runAggressiveTruncationStrategy({
