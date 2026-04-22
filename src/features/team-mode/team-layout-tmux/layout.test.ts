@@ -322,7 +322,7 @@ describe("team-layout-tmux", () => {
       expect(result?.ownedSession).toBe(false)
     })
 
-    test("#given first teammate #when split-window runs #then it splits horizontal with 70% width from leader pane", async () => {
+    test("#given first teammate #when split-window runs #then it creates a single teammate pane from the current window", async () => {
       // given
       const { createTeamLayout } = await loadLayoutModule()
       const members = [{ name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" }]
@@ -334,8 +334,8 @@ describe("team-layout-tmux", () => {
       const commands = getCommands()
       const splitCalls = commands.filter((args) => args[0] === "split-window")
       expect(splitCalls.length).toBe(1)
-      expect(splitCalls[0]!.includes("-h")).toBe(true)
-      expect(splitCalls[0]!.includes("70%")).toBe(true)
+      expect(splitCalls[0]!.includes("-d")).toBe(true)
+      expect(splitCalls[0]!.includes("-P")).toBe(true)
     })
 
     test("#given 3 members #when createTeamLayout runs #then focusPanesByMember contains 3 distinct pane ids", async () => {
@@ -356,7 +356,7 @@ describe("team-layout-tmux", () => {
       expect(new Set(Object.values(result?.focusPanesByMember ?? {})).size).toBe(3)
     })
 
-    test("#given layout created #when createTeamLayout runs #then main-vertical layout applied with leader resized to 30%", async () => {
+    test("#given layout created #when createTeamLayout runs #then it keeps a single current-window split result", async () => {
       // given
       const { createTeamLayout } = await loadLayoutModule()
       const members = [
@@ -365,12 +365,14 @@ describe("team-layout-tmux", () => {
       ]
 
       // when
-      await createTeamLayout("run-layout", members, tmuxMgr as never)
+      const result = await createTeamLayout("run-layout", members, tmuxMgr as never)
 
       // then
       const commands = getCommands()
-      expect(commands.some((args) => args[0] === "select-layout" && args.includes("main-vertical"))).toBe(true)
-      expect(commands.some((args) => args[0] === "resize-pane" && args.includes("30%"))).toBe(true)
+      expect(result).not.toBeNull()
+      expect(Object.keys(result?.focusPanesByMember ?? {}).sort()).toEqual(["m1", "m2"])
+      expect(commands.filter((args) => args[0] === "split-window").length).toBe(2)
+      expect(commands.some((args) => args[0] === "send-keys" && args.includes("Enter"))).toBe(true)
     })
   })
 })
