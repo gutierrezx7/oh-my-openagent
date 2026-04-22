@@ -26,6 +26,14 @@ function createTmuxCommandResult(output: string, success = true) {
 const runTmuxCommandMock = mock((_tmuxPath: string, args: Array<string>, _options?: unknown) => {
   const command = args[0]
 
+  if (command === "display" && args.includes("#{session_name}:#{window_index}")) {
+    return Promise.resolve(createTmuxCommandResult("test-session:0"))
+  }
+
+  if (command === "display" && args.includes("#{window_id}")) {
+    return Promise.resolve(createTmuxCommandResult("@1"))
+  }
+
   if (command === "display" && args.includes("#{pane_current_command}")) {
     return Promise.resolve(createTmuxCommandResult("fish"))
   }
@@ -34,12 +42,14 @@ const runTmuxCommandMock = mock((_tmuxPath: string, args: Array<string>, _option
     return Promise.resolve(createTmuxCommandResult(displaySessionId, displaySuccess))
   }
 
-  if (command === "new-session") {
-    return Promise.resolve(createTmuxCommandResult(`@${nextWindowNumber++}`))
+  if (command === "list-panes") {
+    const allPanes = [process.env.TMUX_PANE ?? "%0"]
+    for (let i = 1; i < nextPaneNumber; i++) allPanes.push(`%${i}`)
+    return Promise.resolve(createTmuxCommandResult(allPanes.join("\n")))
   }
 
-  if (command === "new-window") {
-    return Promise.resolve(createTmuxCommandResult(`@${nextWindowNumber++} %${nextPaneNumber++}`))
+  if (command === "new-session") {
+    return Promise.resolve(createTmuxCommandResult(`@${nextWindowNumber++}`))
   }
 
   if (command === "split-window") {
@@ -122,11 +132,11 @@ describe("team-layout-tmux", () => {
     expect(runTmuxCommandMock).toHaveBeenCalledTimes(0)
   })
 
-  test("spawns each pane with opencode attach as the initial command", async () => {
+  test("splits current window for each member and sends attach via send-keys", async () => {
     // given
     const { createTeamLayout } = await loadLayoutModule()
     const members = [
-      { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
+      { name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" },
       { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
     ]
 
@@ -135,29 +145,21 @@ describe("team-layout-tmux", () => {
 
     // then
     const commands = getCommands()
-    const newWindowCalls = commands.filter((args) => args[0] === "new-window")
-    const splitWindowCalls = commands.filter((args) => args[0] === "split-window")
-    expect(newWindowCalls.length).toBeGreaterThan(0)
-    expect(splitWindowCalls.length).toBeGreaterThan(0)
-    for (const call of newWindowCalls) {
-      const last = call[call.length - 1] ?? ""
-      expect(last).not.toContain("opencode")
-    }
-    for (const call of splitWindowCalls) {
-      const last = call[call.length - 1] ?? ""
-      expect(last).not.toContain("opencode")
-    }
-    const sendKeysCalls = commands.filter((args) => args[0] === "send-keys" && args.includes("-l"))
-    const sendKeysLiterals = sendKeysCalls.map((args) => args[args.length - 1] ?? "")
-    expect(sendKeysLiterals.some((s) => s.includes("--session s-lead") && s.includes("--dir"))).toBe(true)
-    expect(sendKeysLiterals.some((s) => s.includes("--session s-m2") && s.includes("--dir"))).toBe(true)
+    const splitCalls = commands.filter((args) => args[0] === "split-window")
+    expect(splitCalls.length).toBe(2)
+    expect(commands.some((args) => args[0] === "new-window")).toBe(false)
+
+    const sendKeysCalls = commands.filter((args) => args[0] === "send-keys")
+    const literals = sendKeysCalls.map((args) => args.join(" "))
+    expect(literals.some((s) => s.includes("--session s-m1"))).toBe(true)
+    expect(literals.some((s) => s.includes("--session s-m2"))).toBe(true)
   })
 
-  test("creates focus (main-vertical) and grid (tiled) windows", async () => {
+  test("uses main-vertical layout with leader at 30%", async () => {
     // given
     const { createTeamLayout } = await loadLayoutModule()
     const members = [
-      { name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
+      { name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" },
       { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
       { name: "m3", sessionId: "s-m3", worktreePath: "/tmp/m3" },
     ]
@@ -168,10 +170,11 @@ describe("team-layout-tmux", () => {
     // then
     const commands = getCommands()
     const selectLayoutArgs = commands.filter((args) => args[0] === "select-layout").map((args) => args[args.length - 1])
-    expect(selectLayoutArgs).toEqual(["main-vertical", "tiled"])
+    expect(selectLayoutArgs.every((l) => l === "main-vertical")).toBe(true)
+    const resizeCalls = commands.filter((args) => args[0] === "resize-pane" && args.includes("30%"))
+    expect(resizeCalls.length).toBeGreaterThan(0)
     expect(result).not.toBeNull()
-    expect(Object.keys(result?.focusPanesByMember ?? {}).sort()).toEqual(["lead", "m2", "m3"])
-    expect(Object.keys(result?.gridPanesByMember ?? {}).sort()).toEqual(["lead", "m2", "m3"])
+    expect(Object.keys(result?.focusPanesByMember ?? {}).sort()).toEqual(["m1", "m2", "m3"])
   })
 
   test("sets pane title for each member", async () => {
@@ -190,10 +193,8 @@ describe("team-layout-tmux", () => {
     const titleSetters = commands
       .filter((args) => args[0] === "select-pane" && args.includes("-T"))
       .map((args) => args[args.length - 1])
-    const counts: Record<string, number> = {}
-    for (const name of titleSetters) counts[name] = (counts[name] ?? 0) + 1
-    expect(counts["lead"]).toBe(2)
-    expect(counts["m2"]).toBe(2)
+    expect(titleSetters).toContain("lead")
+    expect(titleSetters).toContain("m2")
   })
 
   test("#given ownedSession=false, focusWindowId=@10, gridWindowId=@11 #when removeTeamLayout runs #then tmux kill-window is called twice with -t @10 and -t @11 and kill-session is NEVER called", async () => {
@@ -289,112 +290,87 @@ describe("team-layout-tmux", () => {
     expect(commands.some((args) => args[0] === "new-window")).toBe(false)
   })
 
-  describe("createTeamLayout - caller-session topology", () => {
-		test("#given caller inside tmux with TMUX_PANE=%42 resolving to session $7 #when createTeamLayout runs #then both new-window calls target -t $7 and new-session is never invoked", async () => {
-			// given
-			const { createTeamLayout } = await loadLayoutModule()
-			const members = [
-				{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
-				{ name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
-			]
+  describe("createTeamLayout - split-pane topology", () => {
+    test("#given caller inside tmux #when createTeamLayout runs #then splits current window and never creates new windows or sessions", async () => {
+      // given
+      const { createTeamLayout } = await loadLayoutModule()
+      const members = [
+        { name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" },
+        { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
+      ]
 
-			// when
-			await createTeamLayout("run-caller-session", members, tmuxMgr as never)
+      // when
+      await createTeamLayout("run-split", members, tmuxMgr as never)
 
-			// then
-			const commands = getCommands()
-			expect(commands.some((args) => args[0] === "new-session")).toBe(false)
-			const newWindowTargets = commands
-				.filter((args) => args[0] === "new-window")
-				.map((args) => {
-					const targetIndex = args.indexOf("-t")
-					return targetIndex >= 0 ? args[targetIndex + 1] : undefined
-				})
-			expect(newWindowTargets).toEqual(["$7", "$7"])
-		})
+      // then
+      const commands = getCommands()
+      expect(commands.some((args) => args[0] === "new-session")).toBe(false)
+      expect(commands.some((args) => args[0] === "new-window")).toBe(false)
+      expect(commands.filter((args) => args[0] === "split-window").length).toBe(2)
+    })
 
-		test("#given caller session resolved #when createTeamLayout runs #then returned ownedSession is false and targetSessionId equals the resolved id", async () => {
-			// given
-			const { createTeamLayout } = await loadLayoutModule()
-			const members = [{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" }]
+    test("#given caller session resolved #when createTeamLayout runs #then ownedSession is false", async () => {
+      // given
+      const { createTeamLayout } = await loadLayoutModule()
+      const members = [{ name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" }]
 
-			// when
-			const result = await createTeamLayout("run-owned-false", members, tmuxMgr as never)
+      // when
+      const result = await createTeamLayout("run-owned", members, tmuxMgr as never)
 
-			// then
-			expect(result).not.toBeNull()
-			expect(result?.ownedSession).toBe(false)
-			expect(result?.targetSessionId).toBe("$7")
-		})
+      // then
+      expect(result).not.toBeNull()
+      expect(result?.ownedSession).toBe(false)
+    })
 
-		test("#given TMUX_PANE cannot be resolved (display returns empty) #when createTeamLayout runs #then it falls back to legacy detached session, new-session IS called, ownedSession is true, targetSessionId equals omo-team-<teamRunId>", async () => {
-			// given
-			displaySessionId = ""
-			const { createTeamLayout } = await loadLayoutModule()
-			const teamRunId = "run-fallback"
-			const members = [{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" }]
+    test("#given first teammate #when split-window runs #then it splits horizontal with 70% width from leader pane", async () => {
+      // given
+      const { createTeamLayout } = await loadLayoutModule()
+      const members = [{ name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" }]
 
-			// when
-			const result = await createTeamLayout(teamRunId, members, tmuxMgr as never)
+      // when
+      await createTeamLayout("run-first", members, tmuxMgr as never)
 
-			// then
-			const commands = getCommands()
-			expect(commands.some((args) => args[0] === "new-session")).toBe(true)
-			expect(result).not.toBeNull()
-			expect(result?.ownedSession).toBe(true)
-			expect(result?.targetSessionId).toBe("omo-team-run-fallback")
-		})
+      // then
+      const commands = getCommands()
+      const splitCalls = commands.filter((args) => args[0] === "split-window")
+      expect(splitCalls.length).toBe(1)
+      expect(splitCalls[0]!.includes("-h")).toBe(true)
+      expect(splitCalls[0]!.includes("70%")).toBe(true)
+    })
 
-		test("#given 3 members #when createTeamLayout runs #then focusPanesByMember and gridPanesByMember each contain exactly 3 distinct pane ids keyed by member name", async () => {
-			// given
-			const { createTeamLayout } = await loadLayoutModule()
-			const members = [
-				{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
-				{ name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
-				{ name: "m3", sessionId: "s-m3", worktreePath: "/tmp/m3" },
-			]
+    test("#given 3 members #when createTeamLayout runs #then focusPanesByMember contains 3 distinct pane ids", async () => {
+      // given
+      const { createTeamLayout } = await loadLayoutModule()
+      const members = [
+        { name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" },
+        { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
+        { name: "m3", sessionId: "s-m3", worktreePath: "/tmp/m3" },
+      ]
 
-			// when
-			const result = await createTeamLayout("run-pane-maps", members, tmuxMgr as never)
+      // when
+      const result = await createTeamLayout("run-3-members", members, tmuxMgr as never)
 
-			// then
-			expect(result).not.toBeNull()
-			expect(Object.keys(result?.focusPanesByMember ?? {}).sort()).toEqual(["lead", "m2", "m3"])
-			expect(Object.keys(result?.gridPanesByMember ?? {}).sort()).toEqual(["lead", "m2", "m3"])
-			expect(new Set(Object.values(result?.focusPanesByMember ?? {})).size).toBe(3)
-			expect(new Set(Object.values(result?.gridPanesByMember ?? {})).size).toBe(3)
-		})
+      // then
+      expect(result).not.toBeNull()
+      expect(Object.keys(result?.focusPanesByMember ?? {}).sort()).toEqual(["m1", "m2", "m3"])
+      expect(new Set(Object.values(result?.focusPanesByMember ?? {})).size).toBe(3)
+    })
 
-		test("#given lead is the sole member #when createTeamLayout runs #then no split-window calls are made and both windows still reach select-layout", async () => {
-			// given
-			const { createTeamLayout } = await loadLayoutModule()
-			const members = [{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" }]
+    test("#given layout created #when createTeamLayout runs #then main-vertical layout applied with leader resized to 30%", async () => {
+      // given
+      const { createTeamLayout } = await loadLayoutModule()
+      const members = [
+        { name: "m1", sessionId: "s-m1", worktreePath: "/tmp/m1" },
+        { name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
+      ]
 
-			// when
-			await createTeamLayout("run-lead-only", members, tmuxMgr as never)
+      // when
+      await createTeamLayout("run-layout", members, tmuxMgr as never)
 
-			// then
-			const commands = getCommands()
-			expect(commands.some((args) => args[0] === "split-window")).toBe(false)
-			const selectLayoutArgs = commands.filter((args) => args[0] === "select-layout").map((args) => args[args.length - 1])
-			expect(selectLayoutArgs).toEqual(["main-vertical", "tiled"])
-		})
-
-		test("#given windows created #when createTeamLayout runs #then select-layout is invoked with ['main-vertical','tiled'] in that order", async () => {
-			// given
-			const { createTeamLayout } = await loadLayoutModule()
-			const members = [
-				{ name: "lead", sessionId: "s-lead", worktreePath: "/tmp/lead" },
-				{ name: "m2", sessionId: "s-m2", worktreePath: "/tmp/m2" },
-			]
-
-			// when
-			await createTeamLayout("run-layout-order", members, tmuxMgr as never)
-
-			// then
-			const commands = getCommands()
-			const selectLayoutArgs = commands.filter((args) => args[0] === "select-layout").map((args) => args[args.length - 1])
-			expect(selectLayoutArgs).toEqual(["main-vertical", "tiled"])
-		})
-	})
+      // then
+      const commands = getCommands()
+      expect(commands.some((args) => args[0] === "select-layout" && args.includes("main-vertical"))).toBe(true)
+      expect(commands.some((args) => args[0] === "resize-pane" && args.includes("30%"))).toBe(true)
+    })
+  })
 })
