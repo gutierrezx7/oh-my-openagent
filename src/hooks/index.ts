@@ -33,6 +33,7 @@ export { createInteractiveBashSessionHook } from "./interactive-bash-session";
 
 export { createThinkingBlockValidatorHook } from "./thinking-block-validator";
 export { createTeamMailboxInjector } from "./team-mailbox-injector";
+export { createTeamModeStatusInjector } from "./team-mode-status-injector";
 export { createToolPairValidatorHook } from "./tool-pair-validator";
 export { createCategorySkillReminderHook } from "./category-skill-reminder";
 export { createRalphLoopHook, type RalphLoopHook } from "./ralph-loop";
