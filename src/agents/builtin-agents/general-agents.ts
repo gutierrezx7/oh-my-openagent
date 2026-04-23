@@ -24,6 +24,7 @@ export function collectPendingBuiltinAgents(input: {
   availableModels: Set<string>
   isFirstRunNoCache: boolean
   disabledSkills?: Set<string>
+  teamModeEnabled?: boolean
   useTaskSystem?: boolean
   disableOmoEnv?: boolean
 }): { pendingAgentConfigs: Map<string, AgentConfig>; availableAgents: AvailableAgent[] } {
@@ -39,8 +40,9 @@ export function collectPendingBuiltinAgents(input: {
     browserProvider,
     uiSelectedModel,
     availableModels,
-    isFirstRunNoCache,
+    isFirstRunNoCache: _isFirstRunNoCache,
     disabledSkills,
+    teamModeEnabled,
     disableOmoEnv = false,
   } = input
 
@@ -92,7 +94,7 @@ export function collectPendingBuiltinAgents(input: {
     if (!resolution) continue
     const { model, variant: resolvedVariant } = resolution
 
-    let config = buildAgent(source, model, mergedCategories, gitMasterConfig, browserProvider, disabledSkills)
+    let config = buildAgent(source, model, mergedCategories, gitMasterConfig, browserProvider, disabledSkills, teamModeEnabled)
 
     // Apply resolved variant from model fallback chain
     if (resolvedVariant) {
