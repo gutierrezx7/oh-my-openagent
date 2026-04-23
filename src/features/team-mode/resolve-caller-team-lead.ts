@@ -39,6 +39,5 @@ export function shouldReuseCallerLeadSession(spec: TeamSpec, callerAgentTypeId: 
     return false
   }
 
-  const leadMember = spec.members.find((member) => member.name === spec.leadAgentId)
-  return leadMember?.kind === "subagent_type" && leadMember.subagent_type === callerAgentTypeId
+  return spec.leadAgentId !== undefined
 }

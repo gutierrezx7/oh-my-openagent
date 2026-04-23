@@ -110,6 +110,7 @@ describe("createTeamRun", () => {
     expect(context.client.session.create).toHaveBeenCalledTimes(0)
     expect(runtimeState.status).toBe("active")
     expect(runtimeState.members.map((member) => member.sessionId)).toEqual(["session-1", "session-2", "session-3"])
+    expect((launchMock.mock.calls as Array<[LaunchInput]>).every(([input]) => input.suppressTmuxSpawn === true)).toBe(true)
   })
 
   test("persists the resolved subagent_type and model on each spawned runtime member", async () => {

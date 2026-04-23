@@ -26,6 +26,7 @@ type SpawnedMemberResource = {
 
 type CreateTeamRunOptions = {
   callerAgentTypeId?: string
+  parentMessageID?: string
 }
 
 export class TeamRunCreateError extends Error {
@@ -201,7 +202,9 @@ export async function createTeamRun(
             prompt: buildMemberPrompt(spec, member, resource.worktreePath),
             agent: resolvedMember.agentToUse,
             parentSessionID: leadSessionId,
-            parentMessageID: `team-create:${runtimeState.teamRunId}:${member.name}`,
+            parentMessageID: options?.parentMessageID ?? `team-create:${runtimeState.teamRunId}:${member.name}`,
+            teamRunId: runtimeState.teamRunId,
+            suppressTmuxSpawn: true,
             model: resolvedMember.model,
             fallbackChain: resolvedMember.fallbackChain,
             skillContent: resolvedMember.systemContent,

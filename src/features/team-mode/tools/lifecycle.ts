@@ -125,7 +125,10 @@ export function createTeamCreateTool(
         config,
         bgMgr,
         tmuxMgr,
-        { callerAgentTypeId: callerTeamLead.agentTypeId },
+        {
+          callerAgentTypeId: callerTeamLead.agentTypeId,
+          parentMessageID: runtimeContext.messageID,
+        },
       )
       return JSON.stringify({ teamRunId: runtimeState.teamRunId, runtimeState: sanitizeRuntimeState(runtimeState) })
     },

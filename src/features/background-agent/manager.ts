@@ -316,6 +316,7 @@ export class BackgroundManager {
         spawnDepth: spawnReservation.spawnContext.childDepth,
         parentSessionID: input.parentSessionID,
         parentMessageID: input.parentMessageID,
+        teamRunId: input.teamRunId,
         parentModel: input.parentModel,
         parentAgent: input.parentAgent,
         parentTools: input.parentTools,
@@ -487,7 +488,7 @@ export class BackgroundManager {
       parentID: input.parentSessionID,
     })
 
-    if (this.onSubagentSessionCreated && this.tmuxEnabled && isInsideTmux()) {
+    if (!input.suppressTmuxSpawn && this.onSubagentSessionCreated && this.tmuxEnabled && isInsideTmux()) {
       log("[background-agent] Invoking tmux callback NOW", { sessionID })
       await this.onSubagentSessionCreated({
         sessionID,
@@ -499,7 +500,9 @@ export class BackgroundManager {
       log("[background-agent] tmux callback completed, waiting 200ms")
       await new Promise(r => setTimeout(r, 200))
     } else {
-      log("[background-agent] SKIP tmux callback - conditions not met")
+      log("[background-agent] SKIP tmux callback - conditions not met", {
+        suppressTmuxSpawn: !!input.suppressTmuxSpawn,
+      })
     }
 
     if (this.tasks.get(task.id)?.status === "cancelled") {

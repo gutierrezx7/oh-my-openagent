@@ -1,4 +1,6 @@
-export const TEAM_SESSION_PATTERN = /^omo-team-(.+)$/
+const UUID_V4ISH_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+export const TEAM_SESSION_PATTERN = new RegExp(`^omo-team-(${UUID_V4ISH_PATTERN})$`, "i")
 
 export type TeamSweepDeps = {
 	listCandidates: () => Promise<string[]>
