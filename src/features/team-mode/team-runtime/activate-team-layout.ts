@@ -23,7 +23,7 @@ export async function activateTeamLayout(
 
   const layout = await createTeamLayout(
     runtimeState.teamRunId,
-    runtimeState.members.flatMap((member) => member.sessionId
+    runtimeState.members.flatMap((member) => member.sessionId && member.agentType !== "leader"
       ? [{
           name: member.name,
           sessionId: member.sessionId,

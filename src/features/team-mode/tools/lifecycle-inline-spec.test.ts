@@ -1,16 +1,20 @@
 /// <reference types="bun-types" />
 
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { randomUUID } from "node:crypto"
+import { tmpdir } from "node:os"
+import path from "node:path"
 
 import type { ToolContext } from "@opencode-ai/plugin/tool"
 
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
-import { normalizeTeamSpecInput } from "../team-registry/team-spec-input-normalizer"
 import type { RuntimeState, TeamSpec } from "../types"
 
 const runtimes = new Map<string, RuntimeState>()
 let nextTeamRunNumber = 1
+
+const lifecycleSpecifier = import.meta.resolve("./lifecycle")
+const teamRuntimeCreateSpecifier = import.meta.resolve("../team-runtime/create")
 
 function clone<TValue>(value: TValue): TValue {
   return structuredClone(value)
@@ -61,26 +65,30 @@ const createTeamRunMock = mock(async (spec: TeamSpec, leadSessionId: string) => 
   return clone(runtimeState)
 })
 
-mock.module("../team-runtime/create", () => ({ createTeamRun: createTeamRunMock }))
-mock.module("../team-registry/loader", () => ({
-  loadTeamSpec: mock(async () => {
-    throw new Error("loadTeamSpec should not be called for inline specs")
-  }),
-  normalizeTeamSpecInput,
-}))
-mock.module("../team-state-store/store", () => ({
-  listActiveTeams: mock(async () => []),
-  loadRuntimeState: mock(async () => {
-    throw new Error("loadRuntimeState should not be called")
-  }),
-}))
+function registerModuleMocks(): void {
+  mock.module(teamRuntimeCreateSpecifier, () => ({ createTeamRun: createTeamRunMock }))
+}
 
-const { createTeamCreateTool } = await import("./lifecycle")
+async function loadCreateTeamCreateTool(): Promise<typeof import("./lifecycle").createTeamCreateTool> {
+  const module = await import(`${lifecycleSpecifier}?test=${randomUUID()}`)
+  return module.createTeamCreateTool
+}
 
-const config = TeamModeConfigSchema.parse({ enabled: true })
+function createConfig() {
+  return TeamModeConfigSchema.parse({
+    enabled: true,
+    base_dir: path.join(tmpdir(), `team-mode-inline-spec-${randomUUID()}`),
+  })
+}
 
 describe("createTeamCreateTool inline_spec normalization", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
   beforeEach(() => {
+    mock.restore()
+    registerModuleMocks()
     runtimes.clear()
     nextTeamRunNumber = 1
     createTeamRunMock.mockClear()
@@ -88,6 +96,8 @@ describe("createTeamCreateTool inline_spec normalization", () => {
 
   test("accepts inline_spec objects and auto-assigns missing member names", async () => {
     // given
+    const createTeamCreateTool = await loadCreateTeamCreateTool()
+    const config = createConfig()
     const teamCreateTool = createTeamCreateTool(config, {} as never)
     const inlineSpec = {
       name: "alpha-team",
@@ -117,6 +127,8 @@ describe("createTeamCreateTool inline_spec normalization", () => {
 
   test("accepts stringified inline_spec values from tool calling", async () => {
     // given
+    const createTeamCreateTool = await loadCreateTeamCreateTool()
+    const config = createConfig()
     const teamCreateTool = createTeamCreateTool(config, {} as never)
     const inlineSpec = JSON.stringify({
       name: "ccapi-explorers-v2",

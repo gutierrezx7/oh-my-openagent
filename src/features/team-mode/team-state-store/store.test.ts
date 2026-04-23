@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 
@@ -69,6 +69,17 @@ async function seedRuntimeState(
 ): Promise<void> {
   await mkdir(path.join(config.base_dir ?? "", "runtime", runtimeState.teamRunId), { recursive: true })
   await saveRuntimeState(runtimeState, config)
+}
+
+async function runtimeDirectoryExists(baseDir: string, teamRunId: string): Promise<boolean> {
+  try {
+    await stat(path.join(baseDir, "runtime", teamRunId))
+    return true
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException
+    if (nodeError.code === "ENOENT") return false
+    throw error
+  }
 }
 
 describe("runtime state store", () => {
@@ -199,5 +210,39 @@ describe("runtime state store", () => {
       { teamRunId: firstState.teamRunId, teamName: "alpha-team", status: "creating", memberCount: 2, scope: "user" },
       { teamRunId: secondState.teamRunId, teamName: "beta-team", status: "creating", memberCount: 2, scope: "project" },
     ])
+  })
+
+  test("listActiveTeams removes deleted runtime directories left by interrupted cleanup", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const runtimeState = await createRuntimeState(createSpec("deleted-team"), undefined, "user", config)
+    await saveRuntimeState({ ...runtimeState, status: "deleted" }, config)
+
+    // when
+    const activeTeams = await listActiveTeams(config)
+
+    // then
+    expect(activeTeams).toEqual([])
+    expect(await runtimeDirectoryExists(baseDir, runtimeState.teamRunId)).toBe(false)
+  })
+
+  test("listActiveTeams removes deleting runtimes that have been stuck past the stale timeout", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    temporaryDirectories.push(baseDir)
+    const config = createConfig(baseDir)
+    const runtimeState = await createRuntimeState(createSpec("stuck-delete-team"), undefined, "user", config)
+    await saveRuntimeState({ ...runtimeState, status: "deleting" }, config)
+    const staleTimestamp = new Date(Date.now() - 61_000)
+    await utimes(path.join(baseDir, "runtime", runtimeState.teamRunId, "state.json"), staleTimestamp, staleTimestamp)
+
+    // when
+    const activeTeams = await listActiveTeams(config)
+
+    // then
+    expect(activeTeams).toEqual([])
+    expect(await runtimeDirectoryExists(baseDir, runtimeState.teamRunId)).toBe(false)
   })
 })

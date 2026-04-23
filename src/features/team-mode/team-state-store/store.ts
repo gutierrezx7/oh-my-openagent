@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { mkdir, readFile, readdir } from "node:fs/promises"
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
@@ -9,6 +9,7 @@ import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { atomicWrite, withLock } from "./locks"
 
 const STATE_FILE_NAME = "state.json"
+const STALE_DELETING_TTL_MS = 60_000
 
 const ALLOWED_RUNTIME_TRANSITIONS: Readonly<Record<RuntimeState["status"], ReadonlySet<RuntimeState["status"]>>> = {
   creating: new Set(["active", "failed"]),
@@ -36,6 +37,38 @@ export class InvalidTransitionError extends Error {
 
 function getStatePath(baseDir: string, teamRunId: string): string {
   return path.join(getRuntimeStateDir(baseDir, teamRunId), STATE_FILE_NAME)
+}
+
+function getRuntimeDirectoryPath(baseDir: string, teamRunId: string): string {
+  return getRuntimeStateDir(baseDir, teamRunId)
+}
+
+async function removeRuntimeDirectoryBestEffort(
+  baseDir: string,
+  teamRunId: string,
+  reason: "deleted" | "failed" | "stale_deleting",
+): Promise<void> {
+  try {
+    await rm(getRuntimeDirectoryPath(baseDir, teamRunId), { recursive: true, force: true })
+  } catch (error) {
+    log("team runtime cleanup failed", {
+      event: "team-runtime-cleanup-failed",
+      teamRunId,
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+async function isDeletingRuntimeStale(baseDir: string, teamRunId: string, now: number): Promise<boolean> {
+  try {
+    const runtimeStateStat = await stat(getStatePath(baseDir, teamRunId))
+    return now - runtimeStateStat.mtimeMs > STALE_DELETING_TTL_MS
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException
+    if (nodeError.code === "ENOENT") return true
+    throw error
+  }
 }
 
 function serializeRuntimeState(runtimeState: RuntimeState): string {
@@ -147,6 +180,7 @@ export async function listActiveTeams(
   config: TeamModeConfig,
 ): Promise<Array<{ teamRunId: string; teamName: string; status: string; memberCount: number; scope: "project" | "user" }>> {
   const baseDir = resolveBaseDir(config)
+  const now = Date.now()
 
   try {
     const runtimeEntries = await readdir(path.join(baseDir, "runtime"), { withFileTypes: true })
@@ -157,6 +191,17 @@ export async function listActiveTeams(
 
       try {
         const runtimeState = await loadRuntimeState(runtimeEntry.name, config)
+
+        if (runtimeState.status === "deleted" || runtimeState.status === "failed") {
+          await removeRuntimeDirectoryBestEffort(baseDir, runtimeEntry.name, runtimeState.status)
+          continue
+        }
+
+        if (runtimeState.status === "deleting" && await isDeletingRuntimeStale(baseDir, runtimeEntry.name, now)) {
+          await removeRuntimeDirectoryBestEffort(baseDir, runtimeEntry.name, "stale_deleting")
+          continue
+        }
+
         activeTeams.push({
           teamRunId: runtimeState.teamRunId,
           teamName: runtimeState.teamName,

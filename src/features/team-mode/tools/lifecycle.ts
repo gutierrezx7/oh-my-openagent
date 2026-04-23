@@ -151,7 +151,8 @@ export function createTeamDeleteTool(
       const runtimeContext = toolContext as TeamLifecycleToolContext
       const { runtimeState, participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       const isOrphanedForceDelete = args.force === true && runtimeState.status === "orphaned"
-      if (!(isOrphanedForceDelete && participant !== undefined) && participant?.role !== "lead") {
+      const isStuckDeletingForceDelete = args.force === true && runtimeState.status === "deleting"
+      if (!isStuckDeletingForceDelete && !(isOrphanedForceDelete && participant !== undefined) && participant?.role !== "lead") {
         throw new Error("team_delete is lead-only")
       }
       return JSON.stringify({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, backgroundManager, { force: args.force })) })

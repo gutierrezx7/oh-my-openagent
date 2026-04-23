@@ -1,6 +1,8 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import type { BackgroundManager } from "../../features/background-agent/manager"
 import { lookupTeamSession } from "../../features/team-mode/team-session-registry"
 import { loadRuntimeState, listActiveTeams, transitionRuntimeState } from "../../features/team-mode/team-state-store/store"
+import type { TmuxSessionManager } from "../../features/tmux-subagent/manager"
 import { log } from "../../shared/logger"
 
 type HookInput = { event: { type: string; properties?: unknown } }
@@ -53,7 +55,11 @@ async function findLeadTeamRunId(
   return null
 }
 
-export function createTeamLeadOrphanHandler(config: TeamModeConfig): HookImpl {
+export function createTeamLeadOrphanHandler(
+  config: TeamModeConfig,
+  tmuxMgr?: TmuxSessionManager,
+  bgMgr?: BackgroundManager,
+): HookImpl {
   return async ({ event }: HookInput): Promise<void> => {
     if (event.type !== "session.deleted") return
 
@@ -80,6 +86,17 @@ export function createTeamLeadOrphanHandler(config: TeamModeConfig): HookImpl {
         previousStatus: runtimeState.status,
         nextStatus: nextRuntimeState.status,
       })
+
+      try {
+        const { deleteTeam } = await import("../../features/team-mode/team-runtime/delete-team")
+        await deleteTeam(teamRunId, config, tmuxMgr, bgMgr, { force: true })
+      } catch (deleteError) {
+        log("team lead orphan cleanup failed (non-fatal)", {
+          event: "team-mode-lead-orphan-cleanup-error",
+          teamRunId,
+          error: deleteError instanceof Error ? deleteError.message : String(deleteError),
+        })
+      }
     } catch (error) {
       log("team lead orphan handler failed", {
         event: "team-mode-lead-orphan-handler-error",

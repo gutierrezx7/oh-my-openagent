@@ -69,14 +69,14 @@ describe("activateTeamLayout", () => {
     ): Promise<RuntimeState> => transition(createRuntimeState()))
   })
 
-  test("#given createTeamLayout returns a result with ownedSession=false and grid pane map #when activateTeamLayout runs #then each member is persisted with tmuxPaneId=focusPane AND tmuxGridPaneId=gridPane", async () => {
+  test("#given a leader and one member #when activateTeamLayout runs #then it excludes the leader from layout members and only persists panes for non-leaders", async () => {
     // given
     const runtimeState = createRuntimeState()
     createTeamLayoutSpy.mockResolvedValue({
       focusWindowId: "@10",
       gridWindowId: "@11",
-      focusPanesByMember: { lead: "%10", "member-a": "%11" },
-      gridPanesByMember: { lead: "%20", "member-a": "%21" },
+      focusPanesByMember: { "member-a": "%11" },
+      gridPanesByMember: { "member-a": "%21" },
       targetSessionId: "$caller",
       ownedSession: false,
     })
@@ -91,6 +91,16 @@ describe("activateTeamLayout", () => {
 
     // then
     expect(result).toBe(true)
+    expect(createTeamLayoutSpy).toHaveBeenCalledTimes(1)
+    const createLayoutCall = createTeamLayoutSpy.mock.calls[0]
+    expect(createLayoutCall?.[1]).toEqual([
+      {
+        name: "member-a",
+        sessionId: "ses-member-a",
+        color: undefined,
+        worktreePath: "/project",
+      },
+    ])
     expect(transitionRuntimeStateSpy).toHaveBeenCalledTimes(1)
     const transitionCall = transitionRuntimeStateSpy.mock.calls[0]
     if (!transitionCall) {
@@ -102,8 +112,8 @@ describe("activateTeamLayout", () => {
     expect(nextState.members).toEqual([
       {
         ...runtimeState.members[0],
-        tmuxPaneId: "%10",
-        tmuxGridPaneId: "%20",
+        tmuxPaneId: undefined,
+        tmuxGridPaneId: undefined,
       },
       {
         ...runtimeState.members[1],

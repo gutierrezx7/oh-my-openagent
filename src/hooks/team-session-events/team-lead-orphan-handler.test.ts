@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import { mkdtemp, mkdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -8,6 +8,7 @@ import path from "node:path"
 
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
+import * as deleteTeamModule from "../../features/team-mode/team-runtime/delete-team"
 import {
   clearTeamSessionRegistry,
   registerTeamSession,
@@ -63,6 +64,7 @@ async function seedRuntimeState(runtimeState: RuntimeState, config: TeamModeConf
 }
 
 afterEach(async () => {
+  mock.restore()
   clearTeamSessionRegistry()
   await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
     await rm(directoryPath, { recursive: true, force: true })
@@ -70,12 +72,14 @@ afterEach(async () => {
 })
 
 describe("createTeamLeadOrphanHandler", () => {
-  test("orphanes the team when the deleted session matches the lead", async () => {
+  test("#given the deleted session matches the lead #when the orphan handler runs #then it marks the team orphaned and force-deletes the team", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
     const teamRunId = randomUUID()
     await seedRuntimeState(createRuntimeState(teamRunId), config)
+    const deleteTeamSpy = spyOn(deleteTeamModule, "deleteTeam")
+    deleteTeamSpy.mockResolvedValue({ removedLayout: true, removedWorktrees: [] })
     const handler = createTeamLeadOrphanHandler(config)
 
     // when
@@ -89,9 +93,11 @@ describe("createTeamLeadOrphanHandler", () => {
     // then
     const runtimeState = await loadRuntimeState(teamRunId, config)
     expect(runtimeState.status).toBe("orphaned")
+    expect(deleteTeamSpy).toHaveBeenCalledTimes(1)
+    expect(deleteTeamSpy).toHaveBeenCalledWith(teamRunId, config, undefined, undefined, { force: true })
   })
 
-  test("orphanes the team during the spawn race when the registry tracks the fresh lead session before disk state persists it", async () => {
+  test("#given the registry tracks a fresh lead session before disk state persists it #when the orphan handler runs #then it still marks the team orphaned and force-deletes it", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -105,6 +111,8 @@ describe("createTeamLeadOrphanHandler", () => {
       memberName: "lead",
       role: "lead",
     })
+    const deleteTeamSpy = spyOn(deleteTeamModule, "deleteTeam")
+    deleteTeamSpy.mockResolvedValue({ removedLayout: false, removedWorktrees: [] })
     const handler = createTeamLeadOrphanHandler(config)
 
     // when
@@ -118,9 +126,11 @@ describe("createTeamLeadOrphanHandler", () => {
     // then
     const runtimeState = await loadRuntimeState(teamRunId, config)
     expect(runtimeState.status).toBe("orphaned")
+    expect(deleteTeamSpy).toHaveBeenCalledTimes(1)
+    expect(deleteTeamSpy).toHaveBeenCalledWith(teamRunId, config, undefined, undefined, { force: true })
   })
 
-  test("falls back to disk lookup when the registry points the lead session at the wrong teamRunId", async () => {
+  test("#given the registry points the lead session at the wrong teamRunId #when the orphan handler runs #then it falls back to disk lookup, orphans the correct team, and force-deletes it", async () => {
     // given
     const baseDir = await createTemporaryBaseDir()
     const config = createConfig(baseDir)
@@ -136,6 +146,8 @@ describe("createTeamLeadOrphanHandler", () => {
       memberName: "lead",
       role: "lead",
     })
+    const deleteTeamSpy = spyOn(deleteTeamModule, "deleteTeam")
+    deleteTeamSpy.mockResolvedValue({ removedLayout: false, removedWorktrees: [] })
     const handler = createTeamLeadOrphanHandler(config)
 
     // when
@@ -151,5 +163,7 @@ describe("createTeamLeadOrphanHandler", () => {
     const wrongRuntimeState = await loadRuntimeState(wrongTeamRunId, config)
     expect(correctRuntimeState.status).toBe("orphaned")
     expect(wrongRuntimeState.status).toBe("active")
+    expect(deleteTeamSpy).toHaveBeenCalledTimes(1)
+    expect(deleteTeamSpy).toHaveBeenCalledWith(correctTeamRunId, config, undefined, undefined, { force: true })
   })
 })

@@ -290,7 +290,7 @@ export function createEventHandler(args: {
   const DEDUP_WINDOW_MS = 500;
   const teamModeConfig = pluginConfig.team_mode?.enabled ? pluginConfig.team_mode : undefined;
   const teamLeadOrphanHandler = teamModeConfig
-    ? createTeamLeadOrphanHandler(teamModeConfig)
+    ? createTeamLeadOrphanHandler(teamModeConfig, managers.tmuxSessionManager, managers.backgroundManager)
     : undefined;
   const teamMemberErrorHandler = teamModeConfig
     ? createTeamMemberErrorHandler(teamModeConfig)

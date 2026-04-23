@@ -20,8 +20,8 @@ import {
   mockClient,
   parseToolResult,
   rejectShutdownMock,
-  requireRuntime,
   requestShutdownOfMemberMock,
+  requireRuntime,
   resetLifecycleTestState,
 } from "./lifecycle-test-fixture"
 
@@ -63,7 +63,7 @@ describe("team lifecycle tools", () => {
       config,
       backgroundManager,
       undefined,
-      { callerAgentTypeId: undefined },
+      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
     )
   })
 
@@ -86,7 +86,7 @@ describe("team lifecycle tools", () => {
       config,
       backgroundManager,
       undefined,
-      { callerAgentTypeId: "sisyphus" },
+      { callerAgentTypeId: "sisyphus", parentMessageID: expect.any(String) },
     )
   })
 
@@ -125,7 +125,7 @@ describe("team lifecycle tools", () => {
       config,
       expect.anything(),
       undefined,
-      { callerAgentTypeId: undefined },
+      { callerAgentTypeId: undefined, parentMessageID: expect.any(String) },
     )
     expect(result.runtimeState.members).toHaveLength(2)
     expect(result.runtimeState.members[0]).toMatchObject({ name: "lead", agentType: "leader" })
@@ -190,6 +190,21 @@ describe("team lifecycle tools", () => {
 
     // then
     expect(result).rejects.toThrow("team_delete is lead-only")
+  })
+
+  test("team_delete force=true allows recovering a stuck deleting team without participant session match", async () => {
+    // given
+    const createTool = createTeamCreateTool(config, mockClient, backgroundManager)
+    const deleteTool = createTeamDeleteTool(config, mockClient, backgroundManager)
+    const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
+    requireRuntime(created.teamRunId).status = "deleting"
+
+    // when
+    const result = parseToolResult<{ deleted: boolean }>(await deleteTool.execute({ teamRunId: created.teamRunId, force: true }, createToolContext("outside-session")))
+
+    // then
+    expect(result.deleted).toBe(true)
+    expect(hasRuntime(created.teamRunId)).toBe(false)
   })
 
   test("team_delete force=false on orphaned team still requires lead", async () => {
