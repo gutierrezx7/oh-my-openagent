@@ -217,6 +217,8 @@ export function createToolRegistry(args: {
   )
   const lookAt = isMultimodalLookerEnabled ? factories.createLookAt(ctx) : null
 
+  const getSisyphusJuniorModelOverride = (agentOverride?: { model?: string }): string | undefined => agentOverride?.model
+
   const delegateTask = factories.createDelegateTask({
     manager: managers.backgroundManager,
     client: ctx.client,
@@ -224,9 +226,10 @@ export function createToolRegistry(args: {
     userCategories: pluginConfig.categories,
     agentOverrides: pluginConfig.agents,
     gitMasterConfig: pluginConfig.git_master,
-    sisyphusJuniorModel: pluginConfig.agents?.["sisyphus-junior"]?.model,
+    sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
     browserProvider: skillContext.browserProvider,
     disabledSkills: skillContext.disabledSkills,
+    teamModeEnabled: pluginConfig.team_mode?.enabled ?? false,
     availableCategories,
     availableSkills: skillContext.availableSkills,
     sisyphusAgentConfig: pluginConfig.sisyphus_agent,
@@ -282,6 +285,7 @@ export function createToolRegistry(args: {
     getSessionID: getSessionIDForMcp,
     gitMasterConfig: pluginConfig.git_master,
     browserProvider: skillContext.browserProvider,
+    teamModeEnabled: pluginConfig.team_mode?.enabled ?? false,
     nativeSkills: "skills" in ctx ? (ctx as { skills: SkillLoadOptions["nativeSkills"] }).skills : undefined,
   })
 
