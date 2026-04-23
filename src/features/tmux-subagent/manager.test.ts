@@ -348,6 +348,8 @@ describe('TmuxSessionManager', () => {
     test('falls back to default port when serverUrl has port 0', async () => {
       // given
       mockIsInsideTmux.mockReturnValue(true)
+      const originalPort = process.env.OPENCODE_PORT
+      delete process.env.OPENCODE_PORT
       const { TmuxSessionManager } = await import('./manager')
       const ctx = {
         ...createMockContext(),
@@ -363,7 +365,12 @@ describe('TmuxSessionManager', () => {
       const manager = new TmuxSessionManager(ctx, config, mockTmuxDeps)
 
       // then
-      expect((manager as any).serverUrl).toBe('http://localhost:4096')
+      try {
+        expect((manager as any).serverUrl).toBe('http://localhost:4096')
+      } finally {
+        if (originalPort !== undefined) process.env.OPENCODE_PORT = originalPort
+        else delete process.env.OPENCODE_PORT
+      }
     })
   })
 

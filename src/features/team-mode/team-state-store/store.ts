@@ -9,7 +9,7 @@ import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { atomicWrite, withLock } from "./locks"
 
 const STATE_FILE_NAME = "state.json"
-const STALE_DELETING_TTL_MS = 60_000
+export const STALE_DELETING_TTL_MS = 60_000
 
 const ALLOWED_RUNTIME_TRANSITIONS: Readonly<Record<RuntimeState["status"], ReadonlySet<RuntimeState["status"]>>> = {
   creating: new Set(["active", "failed"]),
@@ -39,17 +39,13 @@ function getStatePath(baseDir: string, teamRunId: string): string {
   return path.join(getRuntimeStateDir(baseDir, teamRunId), STATE_FILE_NAME)
 }
 
-function getRuntimeDirectoryPath(baseDir: string, teamRunId: string): string {
-  return getRuntimeStateDir(baseDir, teamRunId)
-}
-
 async function removeRuntimeDirectoryBestEffort(
   baseDir: string,
   teamRunId: string,
   reason: "deleted" | "failed" | "stale_deleting",
 ): Promise<void> {
   try {
-    await rm(getRuntimeDirectoryPath(baseDir, teamRunId), { recursive: true, force: true })
+    await rm(getRuntimeStateDir(baseDir, teamRunId), { recursive: true, force: true })
   } catch (error) {
     log("team runtime cleanup failed", {
       event: "team-runtime-cleanup-failed",

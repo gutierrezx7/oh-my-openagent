@@ -12,6 +12,7 @@ import type { RuntimeState, TeamSpec } from "../types"
 import {
   InvalidTransitionError,
   RuntimeStateError,
+  STALE_DELETING_TTL_MS,
   createRuntimeState,
   listActiveTeams,
   loadRuntimeState,
@@ -235,7 +236,7 @@ describe("runtime state store", () => {
     const config = createConfig(baseDir)
     const runtimeState = await createRuntimeState(createSpec("stuck-delete-team"), undefined, "user", config)
     await saveRuntimeState({ ...runtimeState, status: "deleting" }, config)
-    const staleTimestamp = new Date(Date.now() - 61_000)
+    const staleTimestamp = new Date(Date.now() - STALE_DELETING_TTL_MS - 1_000)
     await utimes(path.join(baseDir, "runtime", runtimeState.teamRunId, "state.json"), staleTimestamp, staleTimestamp)
 
     // when
