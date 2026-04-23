@@ -97,7 +97,7 @@ describe("team-mode tool registry wiring", () => {
     })
 
     // then
-    expect(createTeamCreateTool).toHaveBeenCalledWith(expect.anything(), client, expect.anything(), expect.anything())
+    expect(createTeamCreateTool).toHaveBeenCalledWith(expect.anything(), client, expect.anything(), expect.anything(), expect.anything())
     expect(createTeamDeleteTool).toHaveBeenCalledWith(expect.anything(), client, expect.anything(), expect.anything())
     expect(createTeamShutdownRequestTool).toHaveBeenCalledWith(expect.anything(), client)
     expect(createTeamApproveShutdownTool).toHaveBeenCalledWith(expect.anything(), client)

@@ -311,6 +311,11 @@ export function createToolRegistry(args: {
           ctx.client,
           managers.backgroundManager,
           managers.tmuxSessionManager,
+          {
+            userCategories: pluginConfig.categories,
+            sisyphusJuniorModel: getSisyphusJuniorModelOverride(pluginConfig.agents?.["sisyphus-junior"]),
+            agentOverrides: pluginConfig.agents,
+          },
         ),
         team_delete: factories.createTeamDeleteTool(
           pluginConfig.team_mode,
