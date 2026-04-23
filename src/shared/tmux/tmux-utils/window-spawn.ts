@@ -3,7 +3,7 @@ import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { SpawnPaneResult } from "../types"
 import { isInsideTmux } from "./environment"
 import { isServerRunning } from "./server-health"
-import { shellEscapeForDoubleQuotedCommand, shellSingleQuote } from "../../shell-env"
+import { shellSingleQuote } from "../../shell-env"
 
 const ISOLATED_WINDOW_NAME = "omo-agents"
 
@@ -49,12 +49,8 @@ export async function spawnTmuxWindow(
 
 	log("[spawnTmuxWindow] all checks passed, creating isolated window...")
 
-	const shell = process.env.SHELL || "/bin/sh"
-	const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
-	const escapedSessionId = shellEscapeForDoubleQuotedCommand(sessionId)
 	const effectiveDirectory = directory || process.cwd()
-	const quotedDirectory = shellSingleQuote(effectiveDirectory)
-	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${escapedSessionId} --dir ${quotedDirectory}"`
+	const opencodeCmd = `opencode attach ${shellSingleQuote(serverUrl)} --session ${shellSingleQuote(sessionId)} --dir ${shellSingleQuote(effectiveDirectory)}`
 
 	const args = [
 		"new-window",

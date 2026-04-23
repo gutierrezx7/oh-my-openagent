@@ -151,8 +151,8 @@ describe("team-layout-tmux", () => {
 
     const sendKeysCalls = commands.filter((args) => args[0] === "send-keys")
     const literals = sendKeysCalls.map((args) => args.join(" "))
-    expect(literals.some((s) => s.includes("--session s-m1"))).toBe(true)
-    expect(literals.some((s) => s.includes("--session s-m2"))).toBe(true)
+    expect(literals.some((s) => s.includes("--session 's-m1'"))).toBe(true)
+    expect(literals.some((s) => s.includes("--session 's-m2'"))).toBe(true)
   })
 
   test("uses main-vertical layout with leader at 30%", async () => {

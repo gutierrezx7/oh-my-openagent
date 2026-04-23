@@ -4,7 +4,7 @@ import type { SpawnPaneResult } from "../types"
 import type { SplitDirection } from "./environment"
 import { isInsideTmux } from "./environment"
 import { isServerRunning } from "./server-health"
-import { shellEscapeForDoubleQuotedCommand, shellSingleQuote } from "../../shell-env"
+import { shellSingleQuote } from "../../shell-env"
 
 export async function spawnTmuxPane(
 	sessionId: string,
@@ -52,11 +52,8 @@ export async function spawnTmuxPane(
 
 	log("[spawnTmuxPane] all checks passed, spawning...")
 
-	const shell = process.env.SHELL || "/bin/sh"
-	const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
 	const effectiveDirectory = directory || process.cwd()
-	const quotedDirectory = shellSingleQuote(effectiveDirectory)
-	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${sessionId} --dir ${quotedDirectory}"`
+	const opencodeCmd = `opencode attach ${shellSingleQuote(serverUrl)} --session ${shellSingleQuote(sessionId)} --dir ${shellSingleQuote(effectiveDirectory)}`
 
 	const args = [
 		"split-window",

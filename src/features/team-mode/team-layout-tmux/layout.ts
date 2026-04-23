@@ -31,7 +31,7 @@ function getPaneWorkingDirectory(member: TeamLayoutMember): string {
 }
 
 function buildAttachCommand(member: TeamLayoutMember, serverUrl: string): string {
-  return `opencode attach ${serverUrl} --session ${member.sessionId} --dir ${shellSingleQuote(getPaneWorkingDirectory(member))}`
+  return `opencode attach ${shellSingleQuote(serverUrl)} --session ${shellSingleQuote(member.sessionId)} --dir ${shellSingleQuote(getPaneWorkingDirectory(member))}`
 }
 
 const PANE_SHELL_INIT_DELAY_MS = 200

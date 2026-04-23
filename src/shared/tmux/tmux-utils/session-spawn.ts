@@ -4,7 +4,7 @@ import type { SpawnPaneResult } from "../types"
 import type { runTmuxCommand as RunTmuxCommand } from "../runner"
 import { isInsideTmux } from "./environment"
 import { isServerRunning } from "./server-health"
-import { shellEscapeForDoubleQuotedCommand, shellSingleQuote } from "../../shell-env"
+import { shellSingleQuote } from "../../shell-env"
 
 const ISOLATED_SESSION_NAME_PREFIX = "omo-agents"
 
@@ -75,12 +75,8 @@ export async function spawnTmuxSession(
 
 	log("[spawnTmuxSession] all checks passed, creating isolated session...")
 
-	const shell = process.env.SHELL || "/bin/sh"
-	const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
-	const escapedSessionId = shellEscapeForDoubleQuotedCommand(sessionId)
 	const effectiveDirectory = directory || process.cwd()
-	const quotedDirectory = shellSingleQuote(effectiveDirectory)
-	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${escapedSessionId} --dir ${quotedDirectory}"`
+	const opencodeCmd = `opencode attach ${shellSingleQuote(serverUrl)} --session ${shellSingleQuote(sessionId)} --dir ${shellSingleQuote(effectiveDirectory)}`
 
 	const sizeArgs: string[] = []
 	if (sourcePaneId) {

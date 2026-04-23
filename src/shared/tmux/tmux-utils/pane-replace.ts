@@ -2,7 +2,7 @@ import type { TmuxConfig } from "../../../config/schema"
 import { getTmuxPath } from "../../../tools/interactive-bash/tmux-path-resolver"
 import type { SpawnPaneResult } from "../types"
 import { isInsideTmux } from "./environment"
-import { shellEscapeForDoubleQuotedCommand, shellSingleQuote } from "../../shell-env"
+import { shellSingleQuote } from "../../shell-env"
 
 export async function replaceTmuxPane(
 	paneId: string,
@@ -34,11 +34,8 @@ export async function replaceTmuxPane(
 	log("[replaceTmuxPane] sending Ctrl+C for graceful shutdown", { paneId })
 	await runTmuxCommand(tmux, ["send-keys", "-t", paneId, "C-c"])
 
-	const shell = process.env.SHELL || "/bin/sh"
-	const escapedUrl = shellEscapeForDoubleQuotedCommand(serverUrl)
 	const effectiveDirectory = directory || process.cwd()
-	const quotedDirectory = shellSingleQuote(effectiveDirectory)
-	const opencodeCmd = `${shell} -c "opencode attach ${escapedUrl} --session ${sessionId} --dir ${quotedDirectory}"`
+	const opencodeCmd = `opencode attach ${shellSingleQuote(serverUrl)} --session ${shellSingleQuote(sessionId)} --dir ${shellSingleQuote(effectiveDirectory)}`
 
 	const result = await runTmuxCommand(tmux, ["respawn-pane", "-k", "-t", paneId, opencodeCmd])
 
