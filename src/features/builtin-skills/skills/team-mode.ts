@@ -62,27 +62,37 @@ Do not use \`oracle\`, \`prometheus\`, or other non-eligible agents here. For th
 
 ## Lifecycle
 
-1. Create the team with \`team_create\`.
-2. Send work with \`team_send_message\` or create tasks with \`team_task_create\`.
-3. Track progress with \`team_task_list\`, \`team_task_get\`, \`team_task_update\`, \`team_status\`, and \`team_list\`.
-4. Request shutdown with \`team_shutdown_request\`.
-5. Approve or reject with \`team_approve_shutdown\` or \`team_reject_shutdown\`.
-6. Delete the team with \`team_delete\`.
+1. Lead creates the team with \`team_create\`.
+2. Lead assigns work with \`team_send_message\` or \`team_task_create\`.
+3. Members report progress with \`team_send_message\` plus \`team_task_update\`.
+4. Lead and members track progress with \`team_task_list\`, \`team_task_get\`, and \`team_status\`.
+5. Lead requests shutdown with \`team_shutdown_request\` when the team is ready to wind down.
+6. The targeted member or the lead handles \`team_approve_shutdown\` or \`team_reject_shutdown\`.
+7. Lead removes the team with \`team_delete\`.
 
-## Tool reference
+## Lead-only tools
 
 - \`team_create\` - create a team from a declaration.
 - \`team_delete\` - remove a team.
-- \`team_shutdown_request\` - ask the lead to wind down.
-- \`team_approve_shutdown\` - approve shutdown.
-- \`team_reject_shutdown\` - reject shutdown.
-- \`team_send_message\` - broadcast or direct a message.
+- \`team_shutdown_request\` - start the shutdown flow.
+
+## Lead or target-member shutdown tools
+
+- \`team_approve_shutdown\` - approve shutdown for the targeted member.
+- \`team_reject_shutdown\` - reject shutdown for the targeted member.
+
+## Universal team-run tools
+
+- \`team_send_message\` - send a direct message; broadcast is still lead-only.
 - \`team_task_create\` - create a task for a member.
 - \`team_task_list\` - list team tasks.
 - \`team_task_update\` - update task state.
 - \`team_task_get\` - inspect one task.
 - \`team_status\` - show live team status.
-- \`team_list\` - list teams.
+
+## Global query tool
+
+- \`team_list\` - list known teams.
 
 ## Bounds
 

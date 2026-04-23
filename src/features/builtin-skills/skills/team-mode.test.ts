@@ -67,4 +67,32 @@ describe("teamModeSkill gating", () => {
       expect(body).toContain(keyword)
     }
   })
+
+  test("team-mode skill separates lead-only and member-safe tools", () => {
+    // given
+    const body = teamModeSkill.template
+
+    // when
+    const leadOnlyTools = ["team_create", "team_delete", "team_shutdown_request"]
+    const universalTools = [
+      "team_send_message",
+      "team_task_create",
+      "team_task_list",
+      "team_task_update",
+      "team_task_get",
+      "team_status",
+    ]
+
+    // then
+    expect(body).toContain("## Lead-only tools")
+    expect(body).toContain("## Universal team-run tools")
+    expect(body).toContain("## Global query tool")
+    for (const toolName of leadOnlyTools) {
+      expect(body).toContain(toolName)
+    }
+    for (const toolName of universalTools) {
+      expect(body).toContain(toolName)
+    }
+    expect(body).not.toContain("team_shutdown_request - ask the lead to wind down")
+  })
 })
