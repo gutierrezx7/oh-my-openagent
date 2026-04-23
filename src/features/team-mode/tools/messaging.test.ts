@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readdir, readFile } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { tmpdir } from "node:os"
@@ -8,11 +8,11 @@ import path from "node:path"
 
 import { type ToolContext } from "@opencode-ai/plugin/tool"
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
-import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import { listUnreadMessages } from "../team-mailbox/inbox"
 import { BroadcastNotPermittedError } from "../team-mailbox/send"
 import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
 import { createRuntimeState, saveRuntimeState } from "../team-state-store/store"
+import { clearTeamSessionRegistry, registerTeamSession } from "../team-session-registry"
 import type { Message } from "../types"
 import { MessageSchema } from "../types"
 import { createTeamSendMessageTool } from "./messaging"
@@ -25,14 +25,28 @@ type PromptAsyncCall = {
   variant?: string
 }
 
-function createRecordingClient(): { client: OpencodeClient; calls: PromptAsyncCall[] } {
+type LiveDeliveryClient = {
+  session: {
+    promptAsync(input: {
+      path: { id: string }
+      body: {
+        parts: Array<{ type: "text"; text: string }>
+        agent?: string
+        model?: { providerID: string; modelID: string }
+        variant?: string
+      }
+    }): Promise<unknown>
+  }
+}
+
+function createRecordingClient(): { client: LiveDeliveryClient; calls: PromptAsyncCall[] } {
   const calls: PromptAsyncCall[] = []
   const client = {
     session: {
       promptAsync: async (input: {
         path: { id: string }
         body: {
-          parts: Array<{ type: string; text?: string }>
+          parts: Array<{ type: "text"; text: string }>
           agent?: string
           model?: { providerID: string; modelID: string }
           variant?: string
@@ -48,11 +62,19 @@ function createRecordingClient(): { client: OpencodeClient; calls: PromptAsyncCa
         return undefined
       },
     },
-  } as unknown as OpencodeClient
+  }
   return { client, calls }
 }
 
-const mockClient = {} as OpencodeClient
+const mockClient: LiveDeliveryClient = {
+  session: {
+    promptAsync: async () => { throw new Error("live delivery disabled in fixture") },
+  },
+}
+
+afterEach(() => {
+  clearTeamSessionRegistry()
+})
 
 async function createFixtureBaseDir(): Promise<string> {
   return await mkdtemp(path.join(tmpdir(), "team-send-message-"))
@@ -239,6 +261,38 @@ describe("createTeamSendMessageTool", () => {
     expect(calls[0].variant).toBeUndefined()
   })
 
+  test("prefers the team session registry when the runtime member session has not been persisted yet", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    registerTeamSession(fixture.memberOneSessionId, {
+      teamRunId: fixture.teamRunId,
+      memberName: "m1",
+      role: "member",
+    })
+
+    const { loadRuntimeState: loadState, saveRuntimeState: saveState } = await import("../team-state-store/store")
+    const runtimeState = await loadState(fixture.teamRunId, fixture.config)
+    const memberOne = runtimeState.members.find((member) => member.name === "m1")
+    if (!memberOne) throw new Error("m1 runtime member missing")
+    memberOne.sessionId = undefined
+    await saveState(runtimeState, fixture.config)
+
+    // when
+    const result = await fixture.tool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "m2",
+      body: "hello",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+    const parsedResult = JSON.parse(result)
+
+    // then
+    expect(parsedResult.deliveredTo).toEqual(["m2"])
+    const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2")
+    const [messageFile] = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json"))
+    const message = MessageSchema.parse(JSON.parse(await readFile(path.join(inboxDir, messageFile), "utf8")))
+    expect(message.from).toBe("m1")
+  })
+
   test("acks the message after live delivery so the transform hook does not redeliver", async () => {
     // given
     const fixture = await createTeamFixture()
@@ -319,7 +373,7 @@ describe("createTeamSendMessageTool", () => {
       session: {
         promptAsync: async () => { throw new Error("network down") },
       },
-    } as unknown as OpencodeClient
+    } satisfies LiveDeliveryClient
     const liveTool = createTeamSendMessageTool(fixture.config, failingClient)
 
     // when
@@ -343,9 +397,10 @@ describe("createTeamSendMessageTool", () => {
       session: {
         promptAsync: async () => {
           unreadDuringDelivery = await listUnreadMessages(fixture.teamRunId, "m2", fixture.config)
+          return undefined
         },
       },
-    } as unknown as OpencodeClient
+    } satisfies LiveDeliveryClient
     const liveTool = createTeamSendMessageTool(fixture.config, reservingClient)
 
     // when

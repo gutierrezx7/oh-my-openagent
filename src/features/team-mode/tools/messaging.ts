@@ -4,7 +4,7 @@ import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { log } from "../../../shared/logger"
-import type { OpencodeClient } from "../../../tools/delegate-task/types"
+import { lookupTeamSession } from "../team-session-registry"
 import { listActiveTeams, loadRuntimeState } from "../team-state-store/store"
 import { buildEnvelope } from "../team-mailbox/poll"
 import {
@@ -19,8 +19,18 @@ import { MessageSchema } from "../types"
 
 const MESSAGE_TOOL_KINDS = ["message", "announcement"] as const
 
-type LiveDeliveryClient = {
-  session: Pick<OpencodeClient["session"], "promptAsync">
+export type LiveDeliveryClient = {
+  session: {
+    promptAsync(input: {
+      path: { id: string }
+      body: {
+        parts: Array<{ type: "text"; text: string }>
+        agent?: string
+        model?: { providerID: string; modelID: string }
+        variant?: string
+      }
+    }): Promise<unknown>
+  }
 }
 
 type TeamRuntimeDetails = {
@@ -31,6 +41,20 @@ type TeamRuntimeDetails = {
 }
 
 async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, config: TeamModeConfig): Promise<TeamRuntimeDetails> {
+  const registryEntry = lookupTeamSession(sessionID)
+  if (registryEntry?.teamRunId === teamRunId) {
+    const runtimeState = await loadRuntimeState(teamRunId, config)
+
+    return {
+      teamRunId: runtimeState.teamRunId,
+      isLead: registryEntry.role === "lead",
+      senderName: registryEntry.memberName,
+      activeMembers: runtimeState.members
+        .map((entry) => entry.name)
+        .filter((name) => name !== registryEntry.memberName),
+    }
+  }
+
   const activeTeams = await listActiveTeams(config)
 
   for (const team of activeTeams) {
