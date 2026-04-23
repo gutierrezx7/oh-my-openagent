@@ -15,6 +15,7 @@ import { activateTeamLayout } from "./activate-team-layout"
 import { cleanupTeamRunResources } from "./cleanup-team-run-resources"
 import { resolveMember } from "./resolve-member"
 import { shouldReuseCallerLeadSession } from "../resolve-caller-team-lead"
+import { sweepStaleTeamSessions } from "../team-layout-tmux/sweep-stale-team-sessions"
 
 const SESSION_ID_POLL_MS = 25
 
@@ -129,6 +130,10 @@ export async function createTeamRun(
 ): Promise<RuntimeState> {
   const existingRuntime = await findExistingRuntime(spec, leadSessionId, config)
   if (existingRuntime) return existingRuntime
+
+  const activeTeams = await listActiveTeams(config)
+  const activeRunIds = new Set(activeTeams.map((t) => t.teamRunId))
+  sweepStaleTeamSessions(activeRunIds).catch(() => {})
 
   const baseDir = resolveBaseDir(config)
   await ensureBaseDirs(baseDir)

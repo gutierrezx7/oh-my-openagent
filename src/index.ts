@@ -86,6 +86,10 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
             try {
               const { resumeAllTeams } = await import("./features/team-mode/team-state-store/resume")
               await resumeAllTeams(resumeContext, teamModeConfig)
+              const { listActiveTeams } = await import("./features/team-mode/team-state-store/store")
+              const { sweepStaleTeamSessions } = await import("./features/team-mode/team-layout-tmux/sweep-stale-team-sessions")
+              const activeTeams = await listActiveTeams(teamModeConfig)
+              await sweepStaleTeamSessions(new Set(activeTeams.map((t) => t.teamRunId)))
             } catch (err) {
               console.warn("[team-mode] resume failed (non-fatal):", err)
             }
