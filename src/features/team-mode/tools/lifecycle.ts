@@ -3,6 +3,7 @@ import type { ToolContext } from "@opencode-ai/plugin/tool"
 import { z } from "zod"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
+import type { CategoriesConfig, AgentOverrides } from "../../../config/schema"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
 import type { BackgroundManager } from "../../background-agent/manager"
 import type { TmuxSessionManager } from "../../tmux-subagent/manager"
@@ -95,11 +96,18 @@ async function resolveParticipant(teamRunId: string, sessionID: string, config: 
   return member ? { runtimeState, participant: { role: "member", memberName: member.name } } : { runtimeState }
 }
 
+export type TeamCreateExecutorConfig = {
+  userCategories?: CategoriesConfig
+  sisyphusJuniorModel?: string
+  agentOverrides?: AgentOverrides
+}
+
 export function createTeamCreateTool(
   config: TeamModeConfig,
   client: OpencodeClient,
   bgMgr: BackgroundManager,
   tmuxMgr?: TmuxSessionManager,
+  executorConfig?: TeamCreateExecutorConfig,
 ): ToolDefinition {
   return tool({
     description: "Create a team run from a named or inline team spec.",
@@ -121,7 +129,14 @@ export function createTeamCreateTool(
       const runtimeState = await createTeamRun(
         spec,
         leadSessionId,
-        { client, manager: bgMgr, directory: projectRoot },
+        {
+          client,
+          manager: bgMgr,
+          directory: projectRoot,
+          userCategories: executorConfig?.userCategories,
+          sisyphusJuniorModel: executorConfig?.sisyphusJuniorModel,
+          agentOverrides: executorConfig?.agentOverrides,
+        },
         config,
         bgMgr,
         tmuxMgr,
@@ -152,7 +167,8 @@ export function createTeamDeleteTool(
       const { runtimeState, participant } = await resolveParticipant(args.teamRunId, runtimeContext.sessionID, config)
       const isOrphanedForceDelete = args.force === true && runtimeState.status === "orphaned"
       const isStuckDeletingForceDelete = args.force === true && runtimeState.status === "deleting"
-      if (!isStuckDeletingForceDelete && !(isOrphanedForceDelete && participant !== undefined) && participant?.role !== "lead") {
+      const isForceBypass = (isStuckDeletingForceDelete || isOrphanedForceDelete) && participant !== undefined
+      if (!isForceBypass && participant?.role !== "lead") {
         throw new Error("team_delete is lead-only")
       }
       return JSON.stringify({ teamRunId: args.teamRunId, teamName: runtimeState.teamName, deleted: true, ...(await deleteTeam(args.teamRunId, config, tmuxMgr, backgroundManager, { force: args.force })) })

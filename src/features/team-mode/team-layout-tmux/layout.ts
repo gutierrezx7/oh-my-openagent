@@ -233,8 +233,17 @@ export async function removeTeamLayout(
       return
     }
 
+    const leaderPaneId = process.env.TMUX_PANE
+    const leaderWindowId = leaderPaneId
+      ? await resolveCurrentWindowId(tmuxPath, leaderPaneId)
+      : null
+
     for (const windowId of [cleanupTarget.focusWindowId, cleanupTarget.gridWindowId]) {
       if (!windowId) continue
+      if (leaderWindowId && windowId === leaderWindowId) {
+        log("tmux team layout skipping kill-window on leader window", { teamRunId, windowId })
+        continue
+      }
       try {
         await runTmuxCommand(tmuxPath, ["kill-window", "-t", windowId])
       } catch (windowError) {

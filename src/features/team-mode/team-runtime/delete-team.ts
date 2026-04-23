@@ -6,7 +6,7 @@ import { canVisualize, removeTeamLayout } from "../team-layout-tmux/layout"
 import { sweepStaleTeamSessions } from "../team-layout-tmux/sweep-stale-team-sessions"
 import { getRuntimeStateDir, resolveBaseDir } from "../team-registry/paths"
 import { unregisterTeamSessionsByTeam } from "../team-session-registry"
-import { loadRuntimeState, saveRuntimeState, transitionRuntimeState } from "../team-state-store/store"
+import { listActiveTeams, loadRuntimeState, saveRuntimeState, transitionRuntimeState } from "../team-state-store/store"
 import type { RuntimeState } from "../types"
 import { DELETABLE_MEMBER_STATUSES, removeWorktrees } from "./shutdown-helpers"
 
@@ -88,9 +88,20 @@ export async function deleteTeam(
 
   const removedLayout = tmuxMgr !== undefined && canVisualize()
   if (removedLayout) {
+    const memberPaneIds = runtimeState.members
+      .filter((member) => member.agentType !== "leader" && member.tmuxPaneId)
+      .map((member) => member.tmuxPaneId!)
+
+    const cleanupTarget = runtimeState.tmuxLayout
+      ? {
+          ...runtimeState.tmuxLayout,
+          paneIds: memberPaneIds.length > 0 ? memberPaneIds : undefined,
+        }
+      : undefined
+
     if (options?.force === true) {
       try {
-        await removeTeamLayout(teamRunId, runtimeState.tmuxLayout, tmuxMgr)
+        await removeTeamLayout(teamRunId, cleanupTarget, tmuxMgr)
       } catch (error) {
         log("team delete layout cleanup failed", {
           teamRunId,
@@ -98,7 +109,7 @@ export async function deleteTeam(
         })
       }
     } else {
-      await removeTeamLayout(teamRunId, runtimeState.tmuxLayout, tmuxMgr)
+      await removeTeamLayout(teamRunId, cleanupTarget, tmuxMgr)
     }
   }
 
@@ -116,7 +127,8 @@ export async function deleteTeam(
 
   unregisterTeamSessionsByTeam(teamRunId)
 
-  sweepStaleTeamSessions(new Set()).catch(() => {})
+  const activeTeams = await listActiveTeams(config)
+  sweepStaleTeamSessions(new Set(activeTeams.map((team) => team.teamRunId))).catch(() => {})
 
   return { removedWorktrees, removedLayout }
 }

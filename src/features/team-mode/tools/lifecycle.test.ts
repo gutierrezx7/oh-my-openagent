@@ -192,15 +192,17 @@ describe("team lifecycle tools", () => {
     expect(result).rejects.toThrow("team_delete is lead-only")
   })
 
-  test("team_delete force=true allows recovering a stuck deleting team without participant session match", async () => {
+  test("team_delete force=true allows member participant to recover a stuck deleting team", async () => {
     // given
     const createTool = createTeamCreateTool(config, mockClient, backgroundManager)
     const deleteTool = createTeamDeleteTool(config, mockClient, backgroundManager)
     const created = parseToolResult<{ teamRunId: string }>(await createTool.execute({ inline_spec: createSpec() }, createToolContext("lead-session")))
-    requireRuntime(created.teamRunId).status = "deleting"
+    const runtimeState = requireRuntime(created.teamRunId)
+    runtimeState.status = "deleting"
+    const memberSessionId = runtimeState.members.find((member) => member.name === "member-a")?.sessionId
 
     // when
-    const result = parseToolResult<{ deleted: boolean }>(await deleteTool.execute({ teamRunId: created.teamRunId, force: true }, createToolContext("outside-session")))
+    const result = parseToolResult<{ deleted: boolean }>(await deleteTool.execute({ teamRunId: created.teamRunId, force: true }, createToolContext(memberSessionId ?? "member-a-session")))
 
     // then
     expect(result.deleted).toBe(true)
