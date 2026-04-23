@@ -135,6 +135,26 @@ describe("createTeamRun", () => {
     ])
   })
 
+  test("member prompt only documents member-safe communication tools", async () => {
+    // given
+    const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-member-prompt-"))
+    temporaryDirectories.push(baseDir)
+    const { manager, launchMock } = createManager(baseDir, async () => ({
+      id: "task-1",
+      sessionID: "session-1",
+      status: "running",
+    } as BackgroundTask))
+
+    // when
+    await createTeamRun(createSpec(1), "lead-session", createContext(baseDir, manager), createConfig(baseDir), manager)
+    const firstPrompt = (launchMock.mock.calls as Array<[LaunchInput]>)[0]?.[0].prompt ?? ""
+
+    // then
+    expect(firstPrompt).toContain("Do not call lead-only lifecycle tools")
+    expect(firstPrompt).not.toContain("3. Request shutdown via `team_shutdown_request`")
+    expect(firstPrompt).toContain("lead can decide whether to request shutdown")
+  })
+
   test("rolls back launched members in reverse order when a later spawn fails", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-rollback-"))
