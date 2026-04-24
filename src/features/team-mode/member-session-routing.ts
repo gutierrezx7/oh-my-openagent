@@ -1,4 +1,5 @@
 import { stripAgentListSortPrefix } from "../../shared/agent-display-names"
+import { resolveRegisteredAgentName } from "../claude-code-session-state"
 import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 import type { RuntimeStateMember } from "./types"
@@ -50,6 +51,7 @@ export function applyMemberSessionRouting(sessionID: string, member: RuntimeStat
 
 export function buildMemberPromptBody(member: RuntimeStateMember, text: string): TeamMemberPromptBody {
   const normalizedAgent = member.subagent_type ? stripAgentListSortPrefix(member.subagent_type) : undefined
+  const launchAgent = resolveRegisteredAgentName(normalizedAgent) ?? normalizedAgent
   const model = member.model
     ? {
         providerID: member.model.providerID,
@@ -58,7 +60,7 @@ export function buildMemberPromptBody(member: RuntimeStateMember, text: string):
     : undefined
 
   return {
-    ...(normalizedAgent ? { agent: normalizedAgent } : {}),
+    ...(launchAgent ? { agent: launchAgent } : {}),
     ...(model ? { model } : {}),
     ...(member.model?.variant ? { variant: member.model.variant } : {}),
     ...buildPromptGenerationParams(member.model),

@@ -8,6 +8,7 @@ import path from "node:path"
 
 import { type ToolContext } from "@opencode-ai/plugin/tool"
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
+import { _resetForTesting, registerAgentName } from "../../claude-code-session-state"
 import { SessionCategoryRegistry } from "../../../shared/session-category-registry"
 import {
   clearAllSessionPromptParams,
@@ -85,6 +86,7 @@ afterEach(() => {
   clearTeamSessionRegistry()
   SessionCategoryRegistry.clear()
   clearAllSessionPromptParams()
+  _resetForTesting()
 })
 
 async function createFixtureBaseDir(): Promise<string> {
@@ -307,6 +309,32 @@ describe("createTeamSendMessageTool", () => {
     expect(calls[0].agent).toBe("atlas")
     expect(calls[0].model).toEqual({ providerID: "anthropic", modelID: "claude-opus-4-7" })
     expect(calls[0].variant).toBe("high")
+  })
+
+  test("live delivery uses the registered agent alias when the runtime stores a config-key agent name", async () => {
+    // given
+    registerAgentName("\u200B\u200B\u200B\u200BAtlas - Plan Executor")
+    const fixture = await createTeamFixture()
+    const { loadRuntimeState: loadState, saveRuntimeState: saveState } = await import("../team-state-store/store")
+    const state = await loadState(fixture.teamRunId, fixture.config)
+    const memberTwo = state.members.find((member) => member.name === "m2")
+    if (!memberTwo) throw new Error("m2 runtime member missing")
+    memberTwo.subagent_type = "atlas"
+    await saveState(state, fixture.config)
+
+    const { client, calls } = createRecordingClient()
+    const liveTool = createTeamSendMessageTool(fixture.config, client)
+
+    // when
+    await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "m2",
+      body: "ping",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+
+    // then
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.agent).toBe("\u200B\u200B\u200B\u200BAtlas - Plan Executor")
   })
 
   test("live delivery reapplies category routing and advanced model params for category members", async () => {
