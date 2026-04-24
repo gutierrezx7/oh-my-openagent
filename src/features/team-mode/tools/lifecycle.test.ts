@@ -131,6 +131,17 @@ describe("team lifecycle tools", () => {
     expect(result.runtimeState.members[0]).toMatchObject({ name: "lead", agentType: "leader" })
   })
 
+  test("team_create rejects an empty leadSessionId override", async () => {
+    // given
+    const teamCreateTool = createTeamCreateTool(config, mockClient, backgroundManager)
+
+    // when
+    const result = teamCreateTool.execute({ inline_spec: createSpec(), leadSessionId: "" }, createToolContext("lead-session"))
+
+    // then
+    await expect(result).rejects.toThrow("leadSessionId")
+  })
+
   test("team_delete propagates active-member errors", async () => {
     // given
     const createTool = createTeamCreateTool(config, mockClient, backgroundManager)

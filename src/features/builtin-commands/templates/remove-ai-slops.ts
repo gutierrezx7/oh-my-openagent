@@ -120,7 +120,7 @@ Team mode is enabled for this session. The rules below **override Phase 2-4** of
     {
       "kind": "category",
       "category": "quick",
-      "prompt": "You run ai-slop-remover on ONE file per task. Load ai-slop-remover via the skill tool. Read the task description for the file path. Apply the skill's detection criteria verbatim. After edits: run lsp_diagnostics on the file. Report via team_send_message(to=sisyphus, summary=<change count>, body=<full ai-slop-remover report>) + team_task_update(status=completed). On ambiguity: team_send_message with UNCLEAR:<reason> + team_task_update(status=pending). Never git add, never run tests, never touch other files."
+      "prompt": "You run ai-slop-remover on ONE file per task. Load ai-slop-remover via the skill tool. Read the task description for the file path. Apply the skill's detection criteria verbatim. After edits: run lsp_diagnostics on the file. Report via team_send_message(teamRunId=<id>, to=\"lead\", summary=<change count>, body=<full ai-slop-remover report>) + team_task_update(status=completed). On ambiguity: send team_send_message(teamRunId=<id>, to=\"lead\", summary=\"UNCLEAR\", body=<reason>) + team_task_update(status=pending). Never git add, never run tests, never touch other files."
     },
     { "kind": "category", "category": "quick", "prompt": "Same contract as peer quick worker." },
     { "kind": "category", "category": "quick", "prompt": "Same contract as peer quick worker." },

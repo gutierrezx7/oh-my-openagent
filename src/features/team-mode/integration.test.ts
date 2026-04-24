@@ -195,6 +195,7 @@ describe("team-mode integration", () => {
       agent?: string
       model?: { providerID: string; modelID: string }
       variant?: string
+      directory?: string
     }
     const recorded: RecordedPrompt[] = []
     const promptAsyncSpy = mock(async (input: {
@@ -205,12 +206,14 @@ describe("team-mode integration", () => {
         model?: { providerID: string; modelID: string }
         variant?: string
       }
+      query?: { directory: string }
     }) => {
       recorded.push({
         sessionId: input.path.id,
         agent: input.body.agent,
         model: input.body.model,
         variant: input.body.variant,
+        directory: input.query?.directory,
       })
       return undefined
     })
@@ -232,6 +235,13 @@ describe("team-mode integration", () => {
     if (!leadMember?.sessionId || !workerMember?.sessionId) {
       throw new Error("expected both team members to hold sessionIds")
     }
+
+    await saveRuntimeState({
+      ...(await loadRuntimeState(runtime.teamRunId, config)),
+      members: runtime.members.map((member) => member.name === "worker"
+        ? { ...member, status: "idle" as const }
+        : member),
+    }, config)
 
     const { createTeamSendMessageTool } = await import("./tools/messaging")
     const tool = createTeamSendMessageTool(config, recordingClient)
@@ -275,6 +285,7 @@ describe("team-mode integration", () => {
     expect(recorded[0]?.agent).toBe("worker-agent")
     expect(recorded[0]?.model).toEqual({ providerID: "openai", modelID: "gpt-5.4-mini" })
     expect(recorded[0]?.variant).toBe("medium")
+    expect(recorded[0]?.directory).toBe(baseDir)
     expect(SessionCategoryRegistry.get(workerMember.sessionId)).toBe("quick")
     expect(getSessionPromptParams(workerMember.sessionId)).toEqual({
       temperature: 0.1,

@@ -210,6 +210,15 @@ describe("REMOVE_AI_SLOPS_TEAM_MODE_ADDENDUM", () => {
     //#when / #then
     expect(REMOVE_AI_SLOPS_TEAM_MODE_ADDENDUM).toContain('category="deep"')
   })
+
+  test("should teach valid lead messaging examples", () => {
+    //#given - the team mode addendum, injected only when team mode is enabled
+
+    //#when / #then
+    expect(REMOVE_AI_SLOPS_TEAM_MODE_ADDENDUM).toContain('teamRunId=<id>, to="*"')
+    expect(REMOVE_AI_SLOPS_TEAM_MODE_ADDENDUM).toContain('to="lead"')
+    expect(REMOVE_AI_SLOPS_TEAM_MODE_ADDENDUM).not.toContain("to=sisyphus")
+  })
 })
 
 describe("loadBuiltinCommands - team mode gating for remove-ai-slops", () => {
@@ -275,6 +284,15 @@ describe("REFACTOR_TEAM_MODE_ADDENDUM", () => {
 
     //#when / #then
     expect(REFACTOR_TEAM_MODE_ADDENDUM).toContain('category="deep"')
+  })
+
+  test("should teach valid lead messaging examples", () => {
+    //#given - the team mode addendum, injected only when team mode is enabled
+
+    //#when / #then
+    expect(REFACTOR_TEAM_MODE_ADDENDUM).toContain('to="lead"')
+    expect(REFACTOR_TEAM_MODE_ADDENDUM).toContain("teamRunId=<id>")
+    expect(REFACTOR_TEAM_MODE_ADDENDUM).not.toContain("to=sisyphus")
   })
 })
 

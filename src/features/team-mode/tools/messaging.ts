@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
+import { z } from "zod"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
 import { log } from "../../../shared/logger"
@@ -30,6 +31,7 @@ export type LiveDeliveryClient = {
         model?: { providerID: string; modelID: string }
         variant?: string
       }
+      query?: { directory: string }
     }): Promise<unknown>
   }
 }
@@ -40,6 +42,23 @@ type TeamRuntimeDetails = {
   senderName: string
   activeMembers: string[]
 }
+
+const TeamReferenceArgsSchema = z.object({
+  path: z.string().min(1),
+  description: z.string().optional(),
+})
+
+const TeamSendMessageArgsSchema = z.object({
+  teamRunId: z.string().min(1),
+  to: z.string().min(1),
+  body: z.string(),
+  kind: z.enum(MESSAGE_TOOL_KINDS).optional(),
+  correlationId: z.string().uuid().optional(),
+  summary: z.string().optional(),
+  references: z.array(TeamReferenceArgsSchema).optional(),
+})
+
+type DeliveryReservation = Awaited<ReturnType<typeof reserveMessageForDelivery>>
 
 async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, config: TeamModeConfig): Promise<TeamRuntimeDetails> {
   const registryEntry = lookupTeamSession(sessionID)
@@ -83,12 +102,31 @@ async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, c
   }
 }
 
+async function releaseReservationSafely(
+  reservation: DeliveryReservation,
+  input: { teamRunId: string; recipient: string; messageId: string },
+): Promise<void> {
+  if (reservation === null) return
+
+  try {
+    await releaseDeliveryReservation(reservation)
+  } catch (releaseError) {
+    log("[team-mailbox] failed to release delivery reservation", {
+      error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+      teamRunId: input.teamRunId,
+      recipient: input.recipient,
+      messageId: input.messageId,
+    })
+  }
+}
+
 async function deliverLive(
   client: LiveDeliveryClient,
   message: Message,
   teamRunId: string,
   deliveredTo: readonly string[],
   config: TeamModeConfig,
+  directory: string,
 ): Promise<void> {
   const runtimeState = await loadRuntimeState(teamRunId, config)
   const envelope = buildEnvelope(message)
@@ -101,7 +139,11 @@ async function deliverLive(
 
     const recipientMember = runtimeState.members.find((entry) => entry.name === recipientName)
     if (!recipientMember) {
-      await releaseDeliveryReservation(reservation).catch(() => {})
+      await releaseReservationSafely(reservation, {
+        teamRunId,
+        recipient: recipientName,
+        messageId: message.messageId,
+      })
       continue
     }
 
@@ -113,16 +155,28 @@ async function deliverLive(
         recipient: recipientName,
         messageId: message.messageId,
       })
-      try {
-        await releaseDeliveryReservation(reservation)
-      } catch (releaseError) {
-        log("[team-mailbox] failed to release delivery reservation", {
-          error: releaseError instanceof Error ? releaseError.message : String(releaseError),
-          teamRunId,
-          recipient: recipientName,
-          messageId: message.messageId,
-        })
-      }
+      await releaseReservationSafely(reservation, {
+        teamRunId,
+        recipient: recipientName,
+        messageId: message.messageId,
+      })
+      continue
+    }
+
+    if (recipientMember.status !== "idle") {
+      log("[team-mailbox] live delivery skipped, falling back to inbox injection", {
+        reason: "recipient-not-idle",
+        teamRunId,
+        recipient: recipientName,
+        recipientSessionId,
+        memberStatus: recipientMember.status,
+        messageId: message.messageId,
+      })
+      await releaseReservationSafely(reservation, {
+        teamRunId,
+        recipient: recipientName,
+        messageId: message.messageId,
+      })
       continue
     }
 
@@ -132,6 +186,7 @@ async function deliverLive(
       await client.session.promptAsync({
         path: { id: recipientSessionId },
         body: buildMemberPromptBody(recipientMember, envelope),
+        query: { directory: recipientMember.worktreePath ?? directory },
       })
       await commitDeliveryReservation(reservation)
       log("[team-mailbox] live delivery committed", {
@@ -147,16 +202,11 @@ async function deliverLive(
         recipient: recipientName,
         messageId: message.messageId,
       })
-      try {
-        await releaseDeliveryReservation(reservation)
-      } catch (releaseError) {
-        log("[team-mailbox] failed to release delivery reservation", {
-          error: releaseError instanceof Error ? releaseError.message : String(releaseError),
-          teamRunId,
-          recipient: recipientName,
-          messageId: message.messageId,
-        })
-      }
+      await releaseReservationSafely(reservation, {
+        teamRunId,
+        recipient: recipientName,
+        messageId: message.messageId,
+      })
     }
   }
 }
@@ -169,17 +219,23 @@ export function createTeamSendMessageTool(config: TeamModeConfig, client: LiveDe
       to: tool.schema.string().describe("Recipient name or * for broadcast"),
       body: tool.schema.string().describe("Message body"),
       kind: tool.schema.enum(MESSAGE_TOOL_KINDS).optional().default("message").describe("Message kind"),
-      correlationId: tool.schema.string().optional().describe("Optional correlation ID"),
+      correlationId: tool.schema.string().optional().describe("Optional UUID correlation ID. Do not use task IDs like 'task-1'."),
       summary: tool.schema.string().optional().describe("Optional summary"),
-      references: tool.schema.array(tool.schema.any()).optional().describe("Optional references"),
+      references: tool.schema.array(tool.schema.object({
+        path: tool.schema.string(),
+        description: tool.schema.string().optional(),
+      })).optional().describe("Optional references as [{ path, description? }]"),
     },
-    execute: async (args, context) => {
-      const runtimeContext = context as { sessionID?: string }
+    execute: async (rawArgs, context) => {
+      const args = TeamSendMessageArgsSchema.parse(rawArgs)
+      const runtimeContext = context as { sessionID?: string; directory?: string }
       const sessionID = runtimeContext.sessionID
 
       if (!sessionID) {
         throw new Error("session ID is required")
       }
+
+      const targetDirectory = typeof runtimeContext.directory === "string" ? runtimeContext.directory : process.cwd()
 
       const teamRuntime = await resolveTeamRuntimeDetails(args.teamRunId, sessionID, config)
       const message = MessageSchema.parse({
@@ -217,7 +273,7 @@ export function createTeamSendMessageTool(config: TeamModeConfig, client: LiveDe
       })
 
       try {
-        await deliverLive(client, message, teamRuntime.teamRunId, result.deliveredTo, config)
+        await deliverLive(client, message, teamRuntime.teamRunId, result.deliveredTo, config, targetDirectory)
       } catch (liveError) {
         log("[team-mailbox] deliverLive top-level error (message already in inbox, safe to ignore)", {
           error: liveError instanceof Error ? liveError.message : String(liveError),

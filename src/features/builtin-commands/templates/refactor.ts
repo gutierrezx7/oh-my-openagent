@@ -673,13 +673,13 @@ Record the chosen path in the TodoWrite list.
     {
       "kind": "category",
       "category": "quick",
-      "prompt": "You handle mechanical refactoring steps (LSP rename, extract variable, inline, simple move, signature change). Use LSP tools for correctness. Apply the task description's per-step instructions verbatim — no scope expansion. After edits, run lsp_diagnostics on touched files. Report via team_send_message(to=sisyphus, summary=<files touched>, body=<lsp status + diff summary>) + team_task_update(status=completed). Never run tests — the external verifier handles that. Never git add, never --continue."
+      "prompt": "You handle mechanical refactoring steps (LSP rename, extract variable, inline, simple move, signature change). Use LSP tools for correctness. Apply the task description's per-step instructions verbatim — no scope expansion. After edits, run lsp_diagnostics on touched files. Report via team_send_message(teamRunId=<id>, to=\"lead\", summary=<files touched>, body=<lsp status + diff summary>) + team_task_update(status=completed). Never run tests — the external verifier handles that. Never git add, never --continue."
     },
     { "kind": "category", "category": "quick", "prompt": "Same contract as peer quick worker." },
     {
       "kind": "category",
       "category": "unspecified-low",
-      "prompt": "You handle logic-preserving refactors that need reasoning (extract function, restructure conditional, pattern transformation, cross-file API change). Read the task description's plan step carefully. Use ast_grep_replace with dryRun=true first, review the preview, then execute. If the step is ambiguous or would require out-of-scope changes, STOP and team_send_message(to=sisyphus) with UNCLEAR:<reason> + team_task_update(status=pending). Same reporting contract as peer quick workers. Never run tests."
+      "prompt": "You handle logic-preserving refactors that need reasoning (extract function, restructure conditional, pattern transformation, cross-file API change). Read the task description's plan step carefully. Use ast_grep_replace with dryRun=true first, review the preview, then execute. If the step is ambiguous or would require out-of-scope changes, STOP and send team_send_message(teamRunId=<id>, to=\"lead\", summary=\"UNCLEAR\", body=<reason>) + team_task_update(status=pending). Same reporting contract as peer quick workers. Never run tests."
     },
     { "kind": "category", "category": "unspecified-low", "prompt": "Same contract as peer unspecified-low worker." }
   ]
@@ -730,7 +730,7 @@ While any team task is \`pending | claimed | in_progress\`:
   If \`deep\` is unavailable, fall back to \`category="unspecified-high"\`. Do not create a commit checkpoint until the verifier returns PASS.
 - On a verifier PASS: make the commit checkpoint for that step (see original 5.3). Proceed.
 - On a verifier FAIL: Lead decides:
-  - **Retry with fix hint**: \`team_task_update(status=pending)\` on the original step + \`team_send_message(to=<original member>, body=<specific failure from verifier>)\`. Runtime reassigns.
+  - **Retry with fix hint**: \`team_task_update(status=pending)\` on the original step + \`team_send_message(teamRunId=<id>, to=<original member>, summary="retry", body=<specific failure from verifier>)\`. Runtime reassigns.
   - **Escalate**: after three FAIL cycles on the same step, STOP and consult the user with full evidence.
 - On a member UNCLEAR message: re-harvest context via a targeted \`task()\` outside the team, broadcast an updated Intent Card fragment, then reassign.
 

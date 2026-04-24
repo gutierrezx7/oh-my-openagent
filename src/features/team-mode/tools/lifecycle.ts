@@ -111,7 +111,11 @@ export function createTeamCreateTool(
 ): ToolDefinition {
   return tool({
     description: "Create a team run from a named or inline team spec.",
-    args: { teamName: tool.schema.string().optional(), inline_spec: tool.schema.unknown().optional(), leadSessionId: tool.schema.string().optional() },
+    args: {
+      teamName: tool.schema.string().optional().describe("Named team spec to load. Provide exactly one of teamName or inline_spec."),
+      inline_spec: tool.schema.unknown().optional().describe("Inline team spec object or JSON string. Provide exactly one of teamName or inline_spec."),
+      leadSessionId: tool.schema.string().optional().describe("Optional non-empty session ID override. Usually omit this and let team_create use the current session."),
+    },
     async execute(rawArgs, toolContext) {
       const args = TeamCreateArgsSchema.parse(rawArgs)
       const runtimeContext = toolContext as TeamLifecycleToolContext
