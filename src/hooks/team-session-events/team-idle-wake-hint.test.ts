@@ -17,6 +17,11 @@ import {
 import { getInboxDir, resolveBaseDir } from "../../features/team-mode/team-registry/paths"
 import { loadRuntimeState, saveRuntimeState } from "../../features/team-mode/team-state-store/store"
 import type { RuntimeState } from "../../features/team-mode/types"
+import { SessionCategoryRegistry } from "../../shared/session-category-registry"
+import {
+  clearAllSessionPromptParams,
+  getSessionPromptParams,
+} from "../../shared/session-prompt-params-state"
 import { createTeamIdleWakeHint } from "./team-idle-wake-hint"
 
 type WakeHintPromptInput = {
@@ -26,6 +31,10 @@ type WakeHintPromptInput = {
     agent?: string
     model?: { providerID: string; modelID: string }
     variant?: string
+    temperature?: number
+    topP?: number
+    maxOutputTokens?: number
+    options?: Record<string, unknown>
   }
   query: { directory: string }
 }
@@ -96,6 +105,8 @@ async function seedUnreadMessage(
 
 afterEach(async () => {
   clearTeamSessionRegistry()
+  SessionCategoryRegistry.clear()
+  clearAllSessionPromptParams()
   await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => {
     await rm(directoryPath, { recursive: true, force: true })
   }))
@@ -181,6 +192,75 @@ describe("createTeamIdleWakeHint", () => {
     expect(promptInput.body.agent).toBe("atlas")
     expect(promptInput.body.model).toEqual({ providerID: "anthropic", modelID: "claude-opus-4-7" })
     expect(promptInput.body.variant).toBe("high")
+  })
+
+  test("reapplies category routing and advanced prompt params on wake hints", async () => {
+    // given
+    const baseDir = await createTemporaryBaseDir()
+    const config = createConfig(baseDir)
+    const teamRunId = randomUUID()
+    const runtimeState = createRuntimeState(teamRunId)
+    const worker = runtimeState.members[0]
+    if (!worker) throw new Error("worker member missing from fixture")
+    worker.subagent_type = "Sisyphus-Junior"
+    worker.category = "quick"
+    worker.model = {
+      providerID: "openai",
+      modelID: "gpt-5.4",
+      variant: "medium",
+      reasoningEffort: "high",
+      temperature: 0.2,
+      top_p: 0.8,
+      maxTokens: 4096,
+      thinking: { type: "enabled", budgetTokens: 2048 },
+    }
+    await seedRuntimeState(runtimeState, config)
+    await seedUnreadMessage(teamRunId, config, randomUUID(), "hello", 100)
+
+    const promptInputs: Array<WakeHintPromptInput> = []
+    const promptAsyncSpy = mock(async (input: WakeHintPromptInput) => {
+      promptInputs.push(input)
+      return {}
+    })
+    const handler = createTeamIdleWakeHint({
+      directory: "/tmp/project",
+      client: { session: { promptAsync: promptAsyncSpy } },
+    }, config)
+
+    // when
+    await handler({
+      event: {
+        type: "session.idle",
+        properties: { sessionID: "member-session" },
+      },
+    })
+
+    // then
+    expect(promptAsyncSpy).toHaveBeenCalledTimes(1)
+    const promptInput = promptInputs[0]
+    if (promptInput === undefined) {
+      throw new Error("expected wake hint prompt input")
+    }
+    expect(promptInput.body.agent).toBe("Sisyphus-Junior")
+    expect(promptInput.body.model).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
+    expect(promptInput.body.variant).toBe("medium")
+    expect(promptInput.body.temperature).toBe(0.2)
+    expect(promptInput.body.topP).toBe(0.8)
+    expect(promptInput.body.maxOutputTokens).toBe(4096)
+    expect(promptInput.body.options).toEqual({
+      reasoningEffort: "high",
+      thinking: { type: "enabled", budgetTokens: 2048 },
+    })
+    expect(SessionCategoryRegistry.get("member-session")).toBe("quick")
+    expect(getSessionPromptParams("member-session")).toEqual({
+      temperature: 0.2,
+      topP: 0.8,
+      maxOutputTokens: 4096,
+      options: {
+        reasoningEffort: "high",
+        thinking: { type: "enabled", budgetTokens: 2048 },
+      },
+    })
   })
 
   test("omits agent and model on the wake-hint promptAsync when the member has none recorded", async () => {

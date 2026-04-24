@@ -100,9 +100,9 @@ describe("aggregateStatus", () => {
     // then
     expect(result.teamName).toBe("team-alpha")
     expect(result.members).toEqual([
-      expect.objectContaining({ name: "lead", unreadMessages: 0 }),
-      expect.objectContaining({ name: "member-1", unreadMessages: 2 }),
-      expect.objectContaining({ name: "member-2", unreadMessages: 0 }),
+      expect.objectContaining({ name: "lead", unreadMessages: 0, delegateTaskCallsUsed: 0, delegateTaskBudgetRemaining: undefined }),
+      expect.objectContaining({ name: "member-1", unreadMessages: 2, delegateTaskCallsUsed: 0, delegateTaskBudgetRemaining: 0 }),
+      expect.objectContaining({ name: "member-2", unreadMessages: 0, delegateTaskCallsUsed: 0, delegateTaskBudgetRemaining: 0 }),
     ])
     expect(result.tasks).toEqual({ pending: 4, claimed: 0, in_progress: 0, completed: 0, deleted: 0, total: 4 })
   })

@@ -3,10 +3,8 @@ import { randomUUID } from "node:crypto"
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import type { TeamModeConfig } from "../../../config/schema/team-mode"
-import { stripAgentListSortPrefix } from "../../../shared/agent-display-names"
 import { log } from "../../../shared/logger"
-import { applySessionPromptParams } from "../../../shared/session-prompt-params-helpers"
-import { SessionCategoryRegistry } from "../../../shared/session-category-registry"
+import { applyMemberSessionRouting, buildMemberPromptBody } from "../member-session-routing"
 import { lookupTeamSession } from "../team-session-registry"
 import { loadRuntimeState } from "../team-state-store/store"
 import { buildEnvelope } from "../team-mailbox/poll"
@@ -41,30 +39,6 @@ type TeamRuntimeDetails = {
   isLead: boolean
   senderName: string
   activeMembers: string[]
-}
-
-function buildPromptGenerationParams(model: {
-  reasoningEffort?: string
-  temperature?: number
-  top_p?: number
-  maxTokens?: number
-  thinking?: { type: "enabled" | "disabled"; budgetTokens?: number }
-} | undefined): Record<string, unknown> {
-  if (!model) {
-    return {}
-  }
-
-  const promptOptions: Record<string, unknown> = {
-    ...(model.reasoningEffort ? { reasoningEffort: model.reasoningEffort } : {}),
-    ...(model.thinking ? { thinking: model.thinking } : {}),
-  }
-
-  return {
-    ...(model.temperature !== undefined ? { temperature: model.temperature } : {}),
-    ...(model.top_p !== undefined ? { topP: model.top_p } : {}),
-    ...(model.maxTokens !== undefined ? { maxOutputTokens: model.maxTokens } : {}),
-    ...(Object.keys(promptOptions).length > 0 ? { options: promptOptions } : {}),
-  }
 }
 
 async function resolveTeamRuntimeDetails(teamRunId: string, sessionID: string, config: TeamModeConfig): Promise<TeamRuntimeDetails> {
@@ -126,7 +100,12 @@ async function deliverLive(
     if (reservation === null) continue
 
     const recipientMember = runtimeState.members.find((entry) => entry.name === recipientName)
-    const recipientSessionId = recipientMember?.sessionId
+    if (!recipientMember) {
+      await releaseDeliveryReservation(reservation).catch(() => {})
+      continue
+    }
+
+    const recipientSessionId = recipientMember.sessionId
     if (!recipientSessionId) {
       log("[team-mailbox] live delivery unavailable, falling back to inbox injection", {
         reason: "missing-session-id",
@@ -147,28 +126,12 @@ async function deliverLive(
       continue
     }
 
-    const recipientAgent = recipientMember?.subagent_type
-    const recipientModel = recipientMember?.model
-      ? { providerID: recipientMember.model.providerID, modelID: recipientMember.model.modelID }
-      : undefined
-    const recipientVariant = recipientMember?.model?.variant
-    const normalizedRecipientAgent = recipientAgent ? stripAgentListSortPrefix(recipientAgent) : undefined
-
-    if (recipientMember?.category) {
-      SessionCategoryRegistry.register(recipientSessionId, recipientMember.category)
-    }
-    applySessionPromptParams(recipientSessionId, recipientMember?.model)
+    applyMemberSessionRouting(recipientSessionId, recipientMember)
 
     try {
       await client.session.promptAsync({
         path: { id: recipientSessionId },
-        body: {
-          ...(normalizedRecipientAgent ? { agent: normalizedRecipientAgent } : {}),
-          ...(recipientModel ? { model: recipientModel } : {}),
-          ...(recipientVariant ? { variant: recipientVariant } : {}),
-          ...buildPromptGenerationParams(recipientMember?.model),
-          parts: [{ type: "text", text: envelope }],
-        },
+        body: buildMemberPromptBody(recipientMember, envelope),
       })
       await commitDeliveryReservation(reservation)
       log("[team-mailbox] live delivery committed", {

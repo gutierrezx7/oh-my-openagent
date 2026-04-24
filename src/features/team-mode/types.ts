@@ -139,6 +139,7 @@ const RuntimeStateMemberSchema = z.object({
   agentType: z.enum(["leader", "general-purpose"]),
   subagent_type: z.string().optional(),
   category: z.string().optional(),
+  delegateTaskCallsUsed: z.number().int().min(0).optional(),
   model: RuntimeStateMemberModelSchema.optional(),
   status: z.enum(["pending", "running", "idle", "errored", "completed", "shutdown_approved"]),
   color: z.string().optional(),

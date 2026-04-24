@@ -1,6 +1,6 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
-import { lookupTeamSession } from "../../features/team-mode/team-session-registry"
-import { loadRuntimeState, listActiveTeams, transitionRuntimeState } from "../../features/team-mode/team-state-store/store"
+import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
+import { loadRuntimeState, transitionRuntimeState } from "../../features/team-mode/team-state-store/store"
 import { log } from "../../shared/logger"
 
 type HookInput = { event: { type: string; properties?: unknown } }
@@ -11,67 +11,6 @@ function getErroredSessionID(properties: unknown): string | undefined {
   return record?.sessionID
 }
 
-type ResolvedRuntimeMember = {
-  teamRunId: string
-  memberName: string
-}
-
-async function findRuntimeMember(
-  erroredSessionID: string,
-  config: TeamModeConfig,
-): Promise<ResolvedRuntimeMember | null> {
-  const registryEntry = lookupTeamSession(erroredSessionID)
-  if (registryEntry?.role === "member") {
-    try {
-      const runtimeState = await loadRuntimeState(registryEntry.teamRunId, config)
-      const memberEntry = runtimeState.members.find(
-        (member) => member.name === registryEntry.memberName
-          && (member.sessionId === undefined || member.sessionId === erroredSessionID),
-      )
-
-      if (memberEntry !== undefined) {
-        return {
-          teamRunId: runtimeState.teamRunId,
-          memberName: memberEntry.name,
-        }
-      }
-    } catch (error) {
-      log("team member error handler registry lookup failed", {
-        event: "team-mode-member-error-handler-registry-error",
-        teamRunId: registryEntry.teamRunId,
-        sessionID: erroredSessionID,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
-  const activeTeams = await listActiveTeams(config)
-
-  for (const activeTeam of activeTeams) {
-    try {
-      const runtimeState = await loadRuntimeState(activeTeam.teamRunId, config)
-      const memberEntry = runtimeState.members.find(
-        (member) => member.sessionId === erroredSessionID,
-      )
-      if (memberEntry !== undefined) {
-        return {
-          teamRunId: runtimeState.teamRunId,
-          memberName: memberEntry.name,
-        }
-      }
-    } catch (error) {
-      log("team member error handler skipped runtime", {
-        event: "team-mode-member-error-handler-runtime-error",
-        teamRunId: activeTeam.teamRunId,
-        sessionID: erroredSessionID,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
-  return null
-}
-
 export function createTeamMemberErrorHandler(config: TeamModeConfig): HookImpl {
   return async ({ event }: HookInput): Promise<void> => {
     if (event.type !== "session.error") return
@@ -80,7 +19,7 @@ export function createTeamMemberErrorHandler(config: TeamModeConfig): HookImpl {
     if (!erroredSessionID) return
 
     try {
-      const runtimeMember = await findRuntimeMember(erroredSessionID, config)
+      const runtimeMember = await findResolvedMemberSession(erroredSessionID, config, "team member error handler")
       if (runtimeMember === null) {
         return
       }

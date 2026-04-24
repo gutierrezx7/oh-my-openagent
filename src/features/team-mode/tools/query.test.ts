@@ -64,7 +64,7 @@ describe("query tools", () => {
       teamName: "team-alpha",
       status: "active",
       createdAt: 1,
-      members: [],
+      members: [{ name: "worker", unreadMessages: 0, delegateTaskCallsUsed: 0, delegateTaskBudgetRemaining: 0 }],
       tasks: { pending: 0, claimed: 0, in_progress: 0, completed: 0, deleted: 0, total: 0 },
       shutdownRequests: [],
       concurrency: { runningOnSameModel: 0, queuedOnSameModel: 0 },

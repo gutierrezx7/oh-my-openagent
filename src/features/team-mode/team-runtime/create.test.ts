@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { access, mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -90,7 +90,7 @@ describe("createTeamRun", () => {
     resolveMemberMock.mockClear()
   })
 
-  afterEach(async () => {
+  afterAll(async () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (directoryPath) => rm(directoryPath, { recursive: true, force: true })))
   })
 
@@ -152,6 +152,9 @@ describe("createTeamRun", () => {
     // then
     expect(firstPrompt).toContain("Do not call lead-only lifecycle tools")
     expect(firstPrompt).not.toContain("3. Request shutdown via `team_shutdown_request`")
+    expect(firstPrompt).toContain("Include `summary` and `references`")
+    expect(firstPrompt).toContain("Move to `status: \"in_progress\"` when you start working")
+    expect(firstPrompt).toContain("delegate-task: Do not call this")
     expect(firstPrompt).toContain("lead can decide whether to request shutdown")
   })
 

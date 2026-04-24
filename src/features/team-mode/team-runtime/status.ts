@@ -23,6 +23,8 @@ export interface TeamStatus {
     worktreePath?: string
     unreadMessages: number
     paneId?: string
+    delegateTaskCallsUsed: number
+    delegateTaskBudgetRemaining?: number
   }>
   tasks: {
     pending: number
@@ -141,6 +143,10 @@ export async function aggregateStatus(
       worktreePath: member.worktreePath,
       unreadMessages,
       paneId: member.tmuxPaneId,
+      delegateTaskCallsUsed: member.delegateTaskCallsUsed ?? 0,
+      delegateTaskBudgetRemaining: member.agentType === "leader"
+        ? undefined
+        : Math.max(0, config.member_delegate_task_budget - (member.delegateTaskCallsUsed ?? 0)),
     })),
     tasks: countTasks(tasks),
     shutdownRequests: runtimeState.shutdownRequests,

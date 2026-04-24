@@ -113,6 +113,7 @@ export async function createRuntimeState(
       status: "pending",
       color: member.color,
       worktreePath: member.worktreePath,
+      delegateTaskCallsUsed: 0,
       lastInjectedTurnMarker: undefined,
       pendingInjectedMessageIds: [],
     })),

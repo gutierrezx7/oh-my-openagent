@@ -1,13 +1,9 @@
 import type { TeamModeConfig } from "../../config/schema/team-mode"
-import { lookupTeamSession } from "../../features/team-mode/team-session-registry"
+import { findResolvedMemberSession } from "../../features/team-mode/member-session-resolution"
 import type { PluginContext } from "../../plugin/types"
 import type { ExecutorContext } from "../../tools/delegate-task/executor-types"
 
 import { pollAndBuildInjection } from "../../features/team-mode/team-mailbox/poll"
-import {
-  listActiveTeams,
-  loadRuntimeState,
-} from "../../features/team-mode/team-state-store/store"
 import { log } from "../../shared/logger"
 
 type HookContext = ExecutorContext | PluginContext | Record<string, never>
@@ -64,45 +60,6 @@ function resolveSessionID(
   return undefined
 }
 
-async function findRuntimeMember(
-  sessionID: string,
-  config: TeamModeConfig,
-): Promise<{ memberName: string; teamRunId: string } | null> {
-  const registryEntry = lookupTeamSession(sessionID)
-  if (registryEntry?.role === "member") {
-    const runtimeState = await loadRuntimeState(registryEntry.teamRunId, config)
-    const runtimeMember = runtimeState.members.find(
-      (member) => member.name === registryEntry.memberName
-        && (member.sessionId === undefined || member.sessionId === sessionID),
-    )
-
-    if (runtimeMember !== undefined) {
-      return {
-        memberName: runtimeMember.name,
-        teamRunId: runtimeState.teamRunId,
-      }
-    }
-  }
-
-  const activeTeams = await listActiveTeams(config)
-
-  for (const activeTeam of activeTeams) {
-    const runtimeState = await loadRuntimeState(activeTeam.teamRunId, config)
-    const runtimeMember = runtimeState.members.find(
-      (member) => member.sessionId === sessionID,
-    )
-
-    if (runtimeMember !== undefined) {
-      return {
-        memberName: runtimeMember.name,
-        teamRunId: runtimeState.teamRunId,
-      }
-    }
-  }
-
-  return null
-}
-
 function buildTurnMarker(sessionID: string, messages: MessageWithParts[]): string {
   return `${sessionID}#${messages.length}`
 }
@@ -149,7 +106,7 @@ export function createTeamMailboxInjector(
       }
 
       try {
-        const runtimeMember = await findRuntimeMember(sessionID, config)
+        const runtimeMember = await findResolvedMemberSession(sessionID, config, "team mailbox injector")
         if (runtimeMember === null) {
           return
         }
