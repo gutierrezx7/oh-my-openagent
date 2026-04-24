@@ -163,23 +163,6 @@ async function deliverLive(
       continue
     }
 
-    if (recipientMember.status !== "idle") {
-      log("[team-mailbox] live delivery skipped, falling back to inbox injection", {
-        reason: "recipient-not-idle",
-        teamRunId,
-        recipient: recipientName,
-        recipientSessionId,
-        memberStatus: recipientMember.status,
-        messageId: message.messageId,
-      })
-      await releaseReservationSafely(reservation, {
-        teamRunId,
-        recipient: recipientName,
-        messageId: message.messageId,
-      })
-      continue
-    }
-
     applyMemberSessionRouting(recipientSessionId, recipientMember)
 
     try {

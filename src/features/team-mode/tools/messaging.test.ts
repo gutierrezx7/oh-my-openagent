@@ -252,7 +252,7 @@ describe("createTeamSendMessageTool", () => {
     expect(calls[0]?.directory).toBe("/tmp/team-worker-m2")
   })
 
-  test("queues for busy recipients instead of forcing live delivery", async () => {
+  test("live-delivers to running recipients so active teammates receive messages immediately", async () => {
     // given
     const fixture = await createTeamFixture()
     const { loadRuntimeState: loadState, saveRuntimeState: saveState } = await import("../team-state-store/store")
@@ -275,10 +275,9 @@ describe("createTeamSendMessageTool", () => {
 
     // then
     expect(parsedResult.deliveredTo).toEqual(["m2"])
-    expect(calls).toHaveLength(0)
-    const inboxDir = getInboxDir(resolveBaseDir(fixture.config), fixture.teamRunId, "m2")
-    const inboxEntries = (await readdir(inboxDir)).filter((entry) => entry.endsWith(".json") && !entry.startsWith("."))
-    expect(inboxEntries).toHaveLength(1)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.sessionId).toBe(fixture.memberTwoSessionId)
+    expect(calls[0]?.directory).toBe(resolveBaseDir(fixture.config))
   })
 
   test("live delivery pins the recipient's resolved subagent_type and model on promptAsync", async () => {

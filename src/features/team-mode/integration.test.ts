@@ -236,13 +236,6 @@ describe("team-mode integration", () => {
       throw new Error("expected both team members to hold sessionIds")
     }
 
-    await saveRuntimeState({
-      ...(await loadRuntimeState(runtime.teamRunId, config)),
-      members: runtime.members.map((member) => member.name === "worker"
-        ? { ...member, status: "idle" as const }
-        : member),
-    }, config)
-
     const { createTeamSendMessageTool } = await import("./tools/messaging")
     const tool = createTeamSendMessageTool(config, recordingClient)
 
