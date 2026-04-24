@@ -406,8 +406,8 @@ describe("loadPluginConfig", () => {
     // then
     expect(existsSync(legacyConfigPath)).toBe(false)
     expect(existsSync(backupConfigPath)).toBe(true)
-    expect(readFileSync(canonicalConfigPath, "utf-8")).toContain('"openai/gpt-5.4"')
-    expect(reloadedConfig.agents?.oracle?.model).toBe("openai/gpt-5.4")
+    expect(readFileSync(canonicalConfigPath, "utf-8")).toContain('"openai/gpt-5.5"')
+    expect(reloadedConfig.agents?.oracle?.model).toBe("openai/gpt-5.5")
   })
 
   it("should still load config from legacy path when migration fails", async () => {
@@ -444,7 +444,7 @@ describe("loadPluginConfig", () => {
     }
 
     // then - should still load the config from legacy path
-    expect(config.agents?.oracle?.model).toBe("openai/gpt-5.4")
+    expect(config.agents?.oracle?.model).toBe("openai/gpt-5.5")
   })
 
   it("should load migrated legacy project config on the first load", async () => {
@@ -470,7 +470,7 @@ describe("loadPluginConfig", () => {
     // then
     expect(existsSync(legacyConfigPath)).toBe(false)
     expect(existsSync(canonicalConfigPath)).toBe(true)
-    expect(config.agents?.oracle?.model).toBe("openai/gpt-5.4")
+    expect(config.agents?.oracle?.model).toBe("openai/gpt-5.5")
   })
 
   it("should preserve explicit user git_master settings when project config omits git_master", async () => {

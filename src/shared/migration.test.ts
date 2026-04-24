@@ -620,7 +620,7 @@ describe("migrateModelVersions", () => {
   test("leaves unknown model strings untouched", () => {
     // given: Agent config with unknown model
     const agents = {
-      oracle: { model: "openai/gpt-5.4", temperature: 0.5 },
+      oracle: { model: "openai/gpt-5.5-preview", temperature: 0.5 },
     }
 
     // when: Migrate model versions
@@ -629,7 +629,7 @@ describe("migrateModelVersions", () => {
     // then: Config should remain unchanged
     expect(changed).toBe(false)
     const oracle = migrated["oracle"] as Record<string, unknown>
-    expect(oracle.model).toBe("openai/gpt-5.4")
+    expect(oracle.model).toBe("openai/gpt-5.5-preview")
   })
 
   test("handles agent config with no model field", () => {
@@ -675,7 +675,7 @@ describe("migrateModelVersions", () => {
     expect(changed).toBe(true)
     expect((migrated["sisyphus"] as Record<string, unknown>).model).toBe("openai/gpt-5.4-codex")
     expect((migrated["prometheus"] as Record<string, unknown>).model).toBe("anthropic/claude-opus-4-7")
-    expect((migrated["oracle"] as Record<string, unknown>).model).toBe("openai/gpt-5.4")
+    expect((migrated["oracle"] as Record<string, unknown>).model).toBe("openai/gpt-5.5")
   })
 
   test("handles empty object", () => {

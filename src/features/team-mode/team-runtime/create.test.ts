@@ -330,7 +330,7 @@ describe("createTeamRun", () => {
     expect(leadMember?.model).toBeUndefined()
   })
 
-  test("still spawns the explicit lead when the caller agent does not match it", async () => {
+  test("reuses the caller session for the lead even when the lead subagent_type differs", async () => {
     // given
     const baseDir = await mkdtemp(path.join(tmpdir(), "team-runtime-explicit-lead-"))
     temporaryDirectories.push(baseDir)
@@ -363,14 +363,13 @@ describe("createTeamRun", () => {
     )
 
     // then
-    expect(launchMock).toHaveBeenCalledTimes(2)
+    expect(launchMock).toHaveBeenCalledTimes(1)
     expect(launchMock.mock.calls.map(([input]) => input.description)).toEqual([
-      "Create team member alpha-team/captain",
       "Create team member alpha-team/member-1",
     ])
     expect(runtimeState.members.map((member) => ({ name: member.name, sessionId: member.sessionId }))).toEqual([
-      { name: "captain", sessionId: "captain-agent-session-1" },
-      { name: "member-1", sessionId: "member-1-agent-session-2" },
+      { name: "captain", sessionId: "lead-session" },
+      { name: "member-1", sessionId: "member-1-agent-session-1" },
     ])
   })
 })
