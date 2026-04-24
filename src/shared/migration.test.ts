@@ -1083,7 +1083,7 @@ describe("migrateConfigFile with backup", () => {
     const rawConfig: Record<string, unknown> = {
       agents: {
         "multimodal-looker": { model: "anthropic/claude-haiku-4-5" },
-        oracle: { model: "openai/gpt-5.4" },
+        oracle: { model: "openai/gpt-5.5" },
         "my-custom-agent": { model: "google/gemini-3.1-pro" },
       },
     }
@@ -1099,7 +1099,7 @@ describe("migrateConfigFile with backup", () => {
 
     const agents = rawConfig.agents as Record<string, Record<string, unknown>>
     expect(agents["multimodal-looker"].model).toBe("anthropic/claude-haiku-4-5")
-    expect(agents.oracle.model).toBe("openai/gpt-5.4")
+    expect(agents.oracle.model).toBe("openai/gpt-5.5")
     expect(agents["my-custom-agent"].model).toBe("google/gemini-3.1-pro")
   })
 
