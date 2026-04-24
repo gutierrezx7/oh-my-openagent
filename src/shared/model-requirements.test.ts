@@ -191,18 +191,18 @@ describe("AGENT_MODEL_REQUIREMENTS", () => {
     })
   })
 
-  test("momus has valid fallbackChain with gpt-5.4 as primary", () => {
+  test("momus has valid fallbackChain with gpt-5.5 as primary", () => {
     // given - momus agent requirement
     const momus = AGENT_MODEL_REQUIREMENTS["momus"]
 
     // when - accessing Momus requirement
-    // then - fallbackChain exists with gpt-5.4 as first entry, variant xhigh
+    // then - fallbackChain exists with gpt-5.5 as first entry, variant xhigh
     expect(momus).toBeDefined()
     expect(momus.fallbackChain).toBeArray()
     expect(momus.fallbackChain.length).toBeGreaterThan(0)
 
     const primary = momus.fallbackChain[0]
-    expect(primary.model).toBe("gpt-5.4")
+    expect(primary.model).toBe("gpt-5.5")
     expect(primary.variant).toBe("xhigh")
     expect(primary.providers[0]).toBe("openai")
   })
