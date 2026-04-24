@@ -5,6 +5,7 @@ import { getTasksDir, resolveBaseDir } from "../team-registry"
 import { atomicWrite } from "../team-state-store/locks"
 import { TaskSchema } from "../types"
 import type { Task } from "../types"
+import { claimTask } from "./claim"
 import { getTask } from "./get"
 
 const ALLOWED_TRANSITIONS: Readonly<Record<Task["status"], ReadonlyArray<Task["status"]>>> = {
@@ -44,6 +45,11 @@ export async function updateTaskStatus(
   const task = await getTask(teamRunId, taskId, config)
 
   if (task.status === newStatus) return task
+
+  if (task.status === "pending" && newStatus === "in_progress") {
+    await claimTask(teamRunId, taskId, memberName, config)
+    return updateTaskStatus(teamRunId, taskId, newStatus, memberName, config)
+  }
 
   if (!isValidTransition(task.status, newStatus)) {
     throw new InvalidTaskTransitionError(task.status, newStatus)

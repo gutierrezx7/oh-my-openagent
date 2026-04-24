@@ -29,6 +29,29 @@ test("updateTaskStatus supports the one-way claim to complete flow", async () =>
   }
 })
 
+test("updateTaskStatus auto-claims when a member starts a pending task directly", async () => {
+  // given
+  const fixture = await createTasklistFixture()
+
+  try {
+    const task = await createTask(fixture.teamRunId, createTaskInput(), fixture.config)
+
+    // when
+    const inProgressTask = await updateTaskStatus(fixture.teamRunId, task.id, "in_progress", "member-a", fixture.config)
+    const loadedTask = await getTask(fixture.teamRunId, task.id, fixture.config)
+
+    // then
+    expect(inProgressTask.status).toBe("in_progress")
+    expect(inProgressTask.owner).toBe("member-a")
+    expect(typeof inProgressTask.claimedAt).toBe("number")
+    expect(loadedTask.status).toBe("in_progress")
+    expect(loadedTask.owner).toBe("member-a")
+    expect(typeof loadedTask.claimedAt).toBe("number")
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
 test("updateTaskStatus rejects reverse transitions", async () => {
   // given
   const fixture = await createTasklistFixture()
