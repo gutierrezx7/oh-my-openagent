@@ -121,6 +121,14 @@ const RuntimeStateMemberModelSchema = z.object({
   providerID: z.string(),
   modelID: z.string(),
   variant: z.string().optional(),
+  reasoningEffort: z.string().optional(),
+  temperature: z.number().optional(),
+  top_p: z.number().optional(),
+  maxTokens: z.number().optional(),
+  thinking: z.object({
+    type: z.enum(["enabled", "disabled"]),
+    budgetTokens: z.number().int().positive().optional(),
+  }).optional(),
 }).strict()
 
 const RuntimeStateMemberSchema = z.object({
@@ -130,6 +138,7 @@ const RuntimeStateMemberSchema = z.object({
   tmuxGridPaneId: z.string().optional(),
   agentType: z.enum(["leader", "general-purpose"]),
   subagent_type: z.string().optional(),
+  category: z.string().optional(),
   model: RuntimeStateMemberModelSchema.optional(),
   status: z.enum(["pending", "running", "idle", "errored", "completed", "shutdown_approved"]),
   color: z.string().optional(),

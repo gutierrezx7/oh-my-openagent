@@ -8,6 +8,11 @@ import path from "node:path"
 
 import { type ToolContext } from "@opencode-ai/plugin/tool"
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
+import { SessionCategoryRegistry } from "../../../shared/session-category-registry"
+import {
+  clearAllSessionPromptParams,
+  getSessionPromptParams,
+} from "../../../shared/session-prompt-params-state"
 import { listUnreadMessages } from "../team-mailbox/inbox"
 import { BroadcastNotPermittedError } from "../team-mailbox/send"
 import { getInboxDir, resolveBaseDir } from "../team-registry/paths"
@@ -74,6 +79,8 @@ const mockClient: LiveDeliveryClient = {
 
 afterEach(() => {
   clearTeamSessionRegistry()
+  SessionCategoryRegistry.clear()
+  clearAllSessionPromptParams()
 })
 
 async function createFixtureBaseDir(): Promise<string> {
@@ -239,6 +246,54 @@ describe("createTeamSendMessageTool", () => {
     expect(calls[0].agent).toBe("atlas")
     expect(calls[0].model).toEqual({ providerID: "anthropic", modelID: "claude-opus-4-7" })
     expect(calls[0].variant).toBe("high")
+  })
+
+  test("live delivery reapplies category routing and advanced model params for category members", async () => {
+    // given
+    const fixture = await createTeamFixture()
+    const { loadRuntimeState: loadState, saveRuntimeState: saveState } = await import("../team-state-store/store")
+    const state = await loadState(fixture.teamRunId, fixture.config)
+    const memberTwo = state.members.find((member) => member.name === "m2")
+    if (!memberTwo) throw new Error("m2 runtime member missing")
+    memberTwo.subagent_type = "Sisyphus-Junior"
+    memberTwo.category = "quick"
+    memberTwo.model = {
+      providerID: "openai",
+      modelID: "gpt-5.4",
+      variant: "medium",
+      reasoningEffort: "high",
+      temperature: 0.2,
+      top_p: 0.8,
+      maxTokens: 4096,
+      thinking: { type: "enabled", budgetTokens: 2048 },
+    }
+    await saveState(state, fixture.config)
+
+    const { client, calls } = createRecordingClient()
+    const liveTool = createTeamSendMessageTool(fixture.config, client)
+
+    // when
+    await liveTool.execute({
+      teamRunId: fixture.teamRunId,
+      to: "m2",
+      body: "ping",
+    }, fixture.toolContext(fixture.memberOneSessionId))
+
+    // then
+    expect(calls).toHaveLength(1)
+    expect(calls[0].agent).toBe("Sisyphus-Junior")
+    expect(calls[0].model).toEqual({ providerID: "openai", modelID: "gpt-5.4" })
+    expect(calls[0].variant).toBe("medium")
+    expect(SessionCategoryRegistry.get(fixture.memberTwoSessionId)).toBe("quick")
+    expect(getSessionPromptParams(fixture.memberTwoSessionId)).toEqual({
+      temperature: 0.2,
+      topP: 0.8,
+      maxOutputTokens: 4096,
+      options: {
+        reasoningEffort: "high",
+        thinking: { type: "enabled", budgetTokens: 2048 },
+      },
+    })
   })
 
   test("live delivery omits agent and model on promptAsync when the runtime member has none recorded", async () => {

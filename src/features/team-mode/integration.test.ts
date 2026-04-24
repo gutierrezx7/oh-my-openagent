@@ -9,14 +9,29 @@ import path from "node:path"
 import { TeamModeConfigSchema } from "../../config/schema/team-mode"
 import type { TeamModeConfig } from "../../config/schema/team-mode"
 import type { ExecutorContext } from "../../tools/delegate-task/executor-types"
+import type { LiveDeliveryClient } from "./tools/messaging"
 import { BackgroundManager } from "../background-agent/manager"
 import type { BackgroundTask, LaunchInput } from "../background-agent/types"
+import { SessionCategoryRegistry } from "../../shared/session-category-registry"
+import {
+  clearAllSessionPromptParams,
+  getSessionPromptParams,
+} from "../../shared/session-prompt-params-state"
 import { getRuntimeStateDir, resolveBaseDir } from "./team-registry/paths"
 import type { TeamSpec } from "./types"
 
 const resolveMemberMock = mock(async (member: TeamSpec["members"][number]) => ({
   agentToUse: `${member.name}-agent`,
-  model: { providerID: "openai", modelID: "gpt-5.4-mini" },
+  model: {
+    providerID: "openai",
+    modelID: "gpt-5.4-mini",
+    variant: "medium",
+    reasoningEffort: "high",
+    temperature: 0.1,
+    top_p: 0.9,
+    maxTokens: 2048,
+    thinking: { type: "enabled", budgetTokens: 1024 },
+  },
   fallbackChain: undefined,
   systemContent: `system:${member.name}`,
 }))
@@ -93,6 +108,8 @@ async function exists(targetPath: string): Promise<boolean> {
 
 afterEach(async () => {
   resolveMemberMock.mockClear()
+  SessionCategoryRegistry.clear()
+  clearAllSessionPromptParams()
   await Promise.all(temporaryDirectories.splice(0).map(async (directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -167,7 +184,7 @@ describe("team-mode integration", () => {
     expect(await exists(getRuntimeStateDir(resolveBaseDir(config), deletingRuntime.teamRunId))).toBe(false)
   })
 
-  test("C-10.5 end-to-end: createTeamRun persists subagent_type/model and team_send_message pins them on promptAsync", async () => {
+  test("C-10.5 end-to-end: createTeamRun persists category-aware routing and team_send_message reapplies it on promptAsync", async () => {
     // given - a 2-member team; resolveMemberMock returns agentToUse + model per member
     const baseDir = await createBaseDir()
     const config = createConfig(baseDir)
@@ -202,12 +219,12 @@ describe("team-mode integration", () => {
         get: mock(async ({ path: { id } }: { path: { id: string } }) => ({ data: { id } })),
         promptAsync: promptAsyncSpy,
       },
-    } as unknown as ExecutorContext["client"]
+    } as ExecutorContext["client"] & LiveDeliveryClient
     const ctx = { client: recordingClient, manager, directory: baseDir }
 
     const runtime = await createTeamRun(createSpec("msg-team", "lead", [
       { kind: "subagent_type", name: "lead", subagent_type: "sisyphus", backendType: "in-process", isActive: true },
-      { kind: "subagent_type", name: "worker", subagent_type: "atlas", backendType: "in-process", isActive: true },
+      { kind: "category", name: "worker", category: "quick", prompt: "work the queue", backendType: "in-process", isActive: true },
     ]), "ses_lead", ctx, config, manager)
 
     const leadMember = runtime.members.find((member) => member.name === "lead")
@@ -217,14 +234,10 @@ describe("team-mode integration", () => {
     }
 
     const { createTeamSendMessageTool } = await import("./tools/messaging")
-    const tool = createTeamSendMessageTool(config, recordingClient as unknown as Parameters<typeof createTeamSendMessageTool>[1])
+    const tool = createTeamSendMessageTool(config, recordingClient)
 
     // when - the lead (via its spawned session) sends a live message to the worker
-    await tool.execute({
-      teamRunId: runtime.teamRunId,
-      to: "worker",
-      body: "integration-ping",
-    }, {
+    const toolContext = {
       sessionID: leadMember.sessionId,
       messageID: randomUUID(),
       agent: "test-agent",
@@ -233,18 +246,45 @@ describe("team-mode integration", () => {
       abort: new AbortController().signal,
       metadata: () => {},
       ask: async () => undefined,
-    } as unknown as Parameters<ReturnType<typeof createTeamSendMessageTool>["execute"]>[1])
+    } as Parameters<ReturnType<typeof createTeamSendMessageTool>["execute"]>[1]
+
+    await tool.execute({
+      teamRunId: runtime.teamRunId,
+      to: "worker",
+      body: "integration-ping",
+    }, toolContext)
 
     // then - runtime state carries the resolved identity end-to-end, and promptAsync receives it
     const persistedRuntime = await loadRuntimeState(runtime.teamRunId, config)
     const persistedWorker = persistedRuntime.members.find((member) => member.name === "worker")
     expect(persistedWorker?.subagent_type).toBe("worker-agent")
-    expect(persistedWorker?.model).toEqual({ providerID: "openai", modelID: "gpt-5.4-mini" })
+    expect(persistedWorker?.category).toBe("quick")
+    expect(persistedWorker?.model).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5.4-mini",
+      variant: "medium",
+      reasoningEffort: "high",
+      temperature: 0.1,
+      top_p: 0.9,
+      maxTokens: 2048,
+      thinking: { type: "enabled", budgetTokens: 1024 },
+    })
 
     expect(recorded).toHaveLength(1)
     expect(recorded[0]?.sessionId).toBe(workerMember.sessionId)
     expect(recorded[0]?.agent).toBe("worker-agent")
     expect(recorded[0]?.model).toEqual({ providerID: "openai", modelID: "gpt-5.4-mini" })
+    expect(recorded[0]?.variant).toBe("medium")
+    expect(SessionCategoryRegistry.get(workerMember.sessionId)).toBe("quick")
+    expect(getSessionPromptParams(workerMember.sessionId)).toEqual({
+      temperature: 0.1,
+      topP: 0.9,
+      maxOutputTokens: 2048,
+      options: {
+        reasoningEffort: "high",
+        thinking: { type: "enabled", budgetTokens: 1024 },
+      },
+    })
   })
 
   test("C-10.4 keeps member spawn concurrency within max_parallel_members", async () => {

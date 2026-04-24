@@ -226,6 +226,11 @@ export async function createTeamRun(
                 providerID: resolvedMember.model.providerID,
                 modelID: resolvedMember.model.modelID,
                 ...(resolvedMember.model.variant ? { variant: resolvedMember.model.variant } : {}),
+                ...(resolvedMember.model.reasoningEffort ? { reasoningEffort: resolvedMember.model.reasoningEffort } : {}),
+                ...(resolvedMember.model.temperature !== undefined ? { temperature: resolvedMember.model.temperature } : {}),
+                ...(resolvedMember.model.top_p !== undefined ? { top_p: resolvedMember.model.top_p } : {}),
+                ...(resolvedMember.model.maxTokens !== undefined ? { maxTokens: resolvedMember.model.maxTokens } : {}),
+                ...(resolvedMember.model.thinking ? { thinking: resolvedMember.model.thinking } : {}),
               }
             : undefined
           await transitionRuntimeState(runtimeState.teamRunId, (currentState) => ({
@@ -237,6 +242,7 @@ export async function createTeamRun(
                   status: "running",
                   worktreePath: resource.worktreePath,
                   subagent_type: resolvedMember.agentToUse,
+                  ...(member.kind === "category" ? { category: member.category } : {}),
                   ...(persistedModel ? { model: persistedModel } : {}),
                 }
               : currentMember),
