@@ -7,7 +7,6 @@ import { formatBytes } from "./message-builder"
 import { log } from "../../shared/logger"
 import {
   getMessageDir,
-  isSqliteBackend,
   resolveInheritedPromptTools,
 } from "../../shared"
 import {
@@ -74,12 +73,11 @@ export async function runAggressiveTruncationStrategy(params: {
     clearSessionState(params.autoCompactState, params.sessionID)
     setTimeout(async () => {
       try {
-        const previousMessage = isSqliteBackend()
-          ? await findNearestMessageWithFieldsFromSDK(params.client, params.sessionID)
-          : (() => {
-              const messageDir = getMessageDir(params.sessionID)
-              return messageDir ? findNearestMessageWithFields(messageDir) : null
-            })()
+        const sdkMessage = await findNearestMessageWithFieldsFromSDK(params.client, params.sessionID)
+        const previousMessage = sdkMessage ?? (() => {
+          const messageDir = getMessageDir(params.sessionID)
+          return messageDir ? findNearestMessageWithFields(messageDir) : null
+        })()
 
         const agentName = getSessionAgent(params.sessionID) ?? previousMessage?.agent
         const launchAgent = resolveRegisteredAgentName(agentName)
